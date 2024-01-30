@@ -1,0 +1,282 @@
+---
+title: "Case Study: Predicting Airline Delays"
+subtitle: "MS in Statistics for Data Science"
+date: 'UC3M, 2024'
+output:
+  html_document: 
+    css: my-theme.css
+    theme: cerulean
+    highlight: tango
+    number_sections: no
+    toc: no
+    toc_depth: 1
+  pdf_document:
+    css: my-theme.css
+    theme: cerulean
+    highlight: tango
+    number_sections: yes
+    toc: yes
+    toc_depth: 1
+editor_options:
+  chunk_output_type: console
+---
+    
+```{r global_options, include=T, echo = F}
+knitr::opts_chunk$set(echo = T, warning=FALSE, message=FALSE)
+```
+
+# Introduction 
+
+On any given day, more than 90,000 flights operate in the US. About one-third of these flights are commercial flights, operated by companies like United, American Airlines, etc. Among these commercial flights, 20% suffer from delays due to various reasons. A certain number of delays are unavoidable, due to unexpected events, but some delays could hopefully be avoided if the factors causing delays are better understood and addressed.
+
+<center>
+<img src="flight-delays.jpg" width="500"/>
+</center>
+
+<br>
+
+In this case study, we will use a dataset with 9,381 flights that occurred in June-August, 2014 between the three busiest US airports:
+
+  - Atlanta (ATL)
+  - Los Angeles (LAX)
+  - Chicago (ORD)
+  
+### The dataset  
+  
+The dataset AirlineDelay.csv includes the following 23 variables:
+
+- Flight = the origin-destination pair (LAX-ORD, ATL-LAX, etc.)
+- Carrier = the carrier operating the flight (American Airlines, Delta Air Lines, etc.)
+- Month = the month of the flight (June, July, or August)
+- DayOfWeek = the day of the week of the flight (Monday, Tuesday, etc.)
+- NumPrevFlights = the number of previous flights taken by this aircraft in the same day
+- PrevFlightGap = the amount of time between when this flight's aircraft is scheduled to arrive at the airport and when it's scheduled to depart for this flight
+- HistoricallyLate = the proportion of time this flight has been late historically
+- InsufficientHistory = whether or not we have enough data to determine the historical record of the flight (equal to 1 if we don't have at least 3 records, equal to 0 if we do)
+- OriginInVolume = the amount of incoming traffic volume at the origin airport, normalized by the typical volume during the flight's time and day of the week
+- OriginOutVolume = the amount of outgoing traffic volume at the origin airport, normalized by the typical volume during the flight's time and day of the week
+- DestInVolume = the amount of incoming traffic volume at the destination airport, normalized by the typical volume during the flight's time and day of the week
+- DestOutVolume = the amount of outgoing traffic volume at the destination airport, normalized by the typical volume during the flight's time and day of the week
+- OriginPrecip = the amount of rain at the origin over the course of the day, in tenths of millimeters
+- OriginAvgWind = average daily wind speed at the origin, in miles per hour
+- OriginWindGust = fastest wind speed during the day at the origin, in miles per hour
+- OriginFog = whether or not there was fog at some point during the day at the origin (1 if there was, 0 if there wasn't)
+- OriginThunder = whether or not there was thunder at some point during the day at the origin (1 if there was, 0 if there wasn't)
+- DestPrecip = the amount of rain at the destination over the course of the day, in tenths of millimeters
+- DestAvgWind = average daily wind speed at the destination, in miles per hour
+- DestWindGust = fastest wind speed during the day at the destination, in miles per hour
+- DestFog = whether or not there was fog at some point during the day at the destination (1 if there was, 0 if there wasn't)
+- DestThunder = whether or not there was thunder at some point during the day at the destination (1 if there was, 0 if there wasn't)
+- TotalDelay = the amount of time the aircraft was delayed, in minutes (this is our dependent variable)
+
+### The goal
+
+Predict the response TotalDelay as a function of the other variables
+
+### Descriptive Analysis
+
+It is always a good idea to separate from the beginning the training set (what the tool is going to see) from the testing set (used only to validate predictions)
+
+```{r}
+library(tidyverse)
+library(MASS)
+library(caret)
+library(e1071) 
+
+# Loading and preparing data
+Airlines <- read.csv("AirlineDelay.csv")
+
+# split between training and testing sets
+spl = createDataPartition(Airlines$TotalDelay, p = 0.8, list = FALSE)  # 80% for training
+
+AirlinesTrain = Airlines[spl,]
+AirlinesTest = Airlines[-spl,]
+
+str(AirlinesTrain)
+
+summary(AirlinesTrain)
+```
+
+Insights?
+
+### Visualization
+
+Add here interesting plots to get information, taking into account the most important variable
+
+```{r}
+hist(AirlinesTrain$TotalDelay)
+```
+
+It is completely asymmetrical, it doesn't follow a normal distribution. We take the logarithm to normalize it and view better the data.
+
+```{r}
+hist(log(AirlinesTrain$TotalDelay))
+```
+
+Now it is more or less normal. Looking at the graph, the mean is 3 so the prediction of the delay of a new flight would be exp(3)~20 minutes.
+
+Including this idea is not a good idea because the flight that have 0 delay, when doing the logarithm, they don't appear so we predict with less information.
+
+```{r}
+AirlinesTrain %>% ggplot(aes(x=TotalDelay))+geom_histogram()
+```
+
+```{r}
+AirlinesTrain %>% ggplot(aes(x=log(TotalDelay)))+geom_histogram()
+```
+
+The warning (Removed 3753 rows containing non-finite values (`stat_bin()`)) tells us the number of observations with delay 0 that do not apppear in the histogram that uses the logarithm. Hence, there would be a large bar at the left of the 0 bar. To make it appear, we are going to add 2 to all the observations, so everything is translated to the right.
+
+```{r}
+AirlinesTrain %>% ggplot(aes(x=log(TotalDelay+2)))+geom_histogram()
+```
+
+Now, looking at the histogram we predict that the delay would be 0 minutes and it is a better prediction than the previous one (20 minutes). Furthermore, if we predict with 5 minutes it is even better because it is between 0 and 20 but closer to 0.
+
+We are going to do the same but for each of the companies.
+
+```{r}
+ggplot(AirlinesTrain, aes(log(TotalDelay+10))) + geom_density(aes(group=Carrier, colour=Carrier, fill=Carrier), alpha=0.1) + ggtitle("TotalDelay distribution")
+```
+
+We can see that the best airline is Delta Air Lines (the least delays) and the worst is Skywest Airlines (the most delays).
+
+Any simple idea to predict delays?
+
+```{r}
+lm(AirlinesTrain$TotalDelay~.,data=AirlinesTrain)
+```
+
+
+# A review of regression
+
+Which are the most correlated variables with Delay?
+
+```{r}
+corr_delay <- sort(cor(AirlinesTrain[,c(5:23)])["TotalDelay",], decreasing = T)
+corr=data.frame(corr_delay)
+ggplot(corr,aes(x = row.names(corr), y = corr_delay)) + 
+  geom_bar(stat = "identity", fill = "lightblue") + 
+  scale_x_discrete(limits= row.names(corr)) +
+  labs(x = "", y = "TotalDelay", title = "Correlations") + 
+  theme(plot.title = element_text(hjust = 0, size = rel(1.5)),
+        axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+Insights?
+
+He likes to visualize the correlation between the target and the target (which is 1 obviously), so the rest aren't in a scale. Without the first column, the second would be very big when in reality the correlation is very low.
+
+Simple regression: try first the most relevant predictor from previous analysis
+
+```{r}
+linFit <- lm(log(TotalDelay+2) ~ HistoricallyLate, data=AirlinesTrain)
+summary(linFit)
+```
+
+Insights?
+
+We see that the variable HistoricallyLate is significant because the p-value is very small (<2e-16). We see that the $R^2$ is 0.06645.
+
+### Prediction
+
+```{r}
+# Take care: output is in logs
+yhat = exp(predict(linFit,newdata=AirlinesTest))-2
+y = AirlinesTest$TotalDelay
+R2 = cor(y,yhat)^2
+R2
+```
+
+We do the exponential and substract 2 to revert the changes made. Note the $R^2$ in the testing set is now less (0.04367341) than that in the training set (0.06645). Why?
+
+### Multiple regression
+
+If we include more variables in the model, the prediction accuracy could be improved
+
+Try some multiple regression models and compute performance measures in the testing set
+
+```{r}
+modeltotal=lm(log(TotalDelay+2)~.,data=AirlinesTrain)
+summary(modeltotal)
+```
+
+The $R^2$ is much smaller now, 0.1935.
+
+Prediction:
+
+```{r}
+yhat2 = exp(predict(modeltotal,newdata=AirlinesTest))-2
+y2 = AirlinesTest$TotalDelay
+R22 = cor(y2,yhat2)^2
+R22
+```
+
+Now the $R^2$ is once again smaller when predicting, 0.1091959.
+
+Are these performance measures good enough?
+
+Check also the performance of a naive model
+
+# The classification approach
+
+Let's now divide the Total Delay variable in just three categories:
+
+- No Delay
+- Minor Delay
+- Major Delay
+
+```{r}
+# Create the three groups or categories (labels)
+Airlines$DelayClass = factor(ifelse(Airlines$TotalDelay == 0, "No Delay", ifelse(Airlines$TotalDelay >= 30, "Major Delay", "Minor Delay")))
+levels(Airlines$DelayClass)
+
+```
+
+Is this enough?
+
+```{r}
+
+```
+
+
+### Some descriptive analysis for classification
+
+```{r}
+# split between training and testing sets
+spl = createDataPartition(Airlines$DelayClass, p = 0.8, list = FALSE)  # 80% for training
+
+AirlinesTrain = Airlines[spl,]
+AirlinesTest = Airlines[-spl,]
+
+
+```
+
+Are the classes well balanced?
+
+
+```{r}
+
+```
+
+## A basic and powerful classifier: logistic regression
+
+3 groups, hence 2 regressions (respect to the reference level, MajorDelay):
+
+```{r}
+library(VGAM)
+
+log.fit = vglm(DelayClass ~ ., family=multinomial(refLevel=1), data=AirlinesTrain)
+summary(log.fit)
+```
+
+### Prediction
+
+```{r}
+prob.test = predict(log.fit, newdata=AirlinesTest, type="response")
+head(prob.test)
+```
+
+The output are probabilities, no labels
+
+How to predict the labels?
