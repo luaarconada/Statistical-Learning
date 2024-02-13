@@ -1,0 +1,438 @@
+---
+title: "Case Study: Predicting Airline Delays"
+subtitle: "MS in Statistics for Data Science"
+author: "Javier Nogales"
+date: "2024"
+output:
+  html_document: 
+    css: my-theme.css
+    theme: cerulean
+    highlight: tango
+    number_sections: no
+    toc: no
+    toc_depth: 1
+  pdf_document:
+    css: my-theme.css
+    theme: cerulean
+    highlight: tango
+    number_sections: yes
+    toc: yes
+    toc_depth: 1
+editor_options:
+  chunk_output_type: console
+---
+    
+```{r global_options, include=T, echo = F}
+knitr::opts_chunk$set(echo = T, warning=FALSE, message=FALSE)
+```
+
+# Introduction 
+
+On any given day, more than 90,000 flights operate in the US. About one-third of these flights are commercial flights, operated by companies like United, American Airlines, etc. Among these commercial flights, 20% suffer from delays due to various reasons. A certain number of delays are unavoidable, due to unexpected events, but some delays could hopefully be avoided if the factors causing delays are better understood and addressed.
+
+<center>
+<img src="flight-delays.jpg" width="500"/>
+</center>
+
+<br>
+
+In this case study, we will use a dataset with 9,381 flights that occurred in June-August, 2014 between the three busiest US airports:
+
+  - Atlanta (ATL)
+  - Los Angeles (LAX)
+  - Chicago (ORD)
+  
+### The dataset  
+  
+The dataset AirlineDelay.csv includes the following 23 variables:
+
+- Flight = the origin-destination pair (LAX-ORD, ATL-LAX, etc.)
+- Carrier = the carrier operating the flight (American Airlines, Delta Air Lines, etc.)
+- Month = the month of the flight (June, July, or August)
+- DayOfWeek = the day of the week of the flight (Monday, Tuesday, etc.)
+- NumPrevFlights = the number of previous flights taken by this aircraft in the same day
+- PrevFlightGap = the amount of time between when this flight's aircraft is scheduled to arrive at the airport and when it's scheduled to depart for this flight
+- HistoricallyLate = the proportion of time this flight has been late historically
+- InsufficientHistory = whether or not we have enough data to determine the historical record of the flight (equal to 1 if we don't have at least 3 records, equal to 0 if we do)
+- OriginInVolume = the amount of incoming traffic volume at the origin airport, normalized by the typical volume during the flight's time and day of the week
+- OriginOutVolume = the amount of outgoing traffic volume at the origin airport, normalized by the typical volume during the flight's time and day of the week
+- DestInVolume = the amount of incoming traffic volume at the destination airport, normalized by the typical volume during the flight's time and day of the week
+- DestOutVolume = the amount of outgoing traffic volume at the destination airport, normalized by the typical volume during the flight's time and day of the week
+- OriginPrecip = the amount of rain at the origin over the course of the day, in tenths of millimeters
+- OriginAvgWind = average daily wind speed at the origin, in miles per hour
+- OriginWindGust = fastest wind speed during the day at the origin, in miles per hour
+- OriginFog = whether or not there was fog at some point during the day at the origin (1 if there was, 0 if there wasn't)
+- OriginThunder = whether or not there was thunder at some point during the day at the origin (1 if there was, 0 if there wasn't)
+- DestPrecip = the amount of rain at the destination over the course of the day, in tenths of millimeters
+- DestAvgWind = average daily wind speed at the destination, in miles per hour
+- DestWindGust = fastest wind speed during the day at the destination, in miles per hour
+- DestFog = whether or not there was fog at some point during the day at the destination (1 if there was, 0 if there wasn't)
+- DestThunder = whether or not there was thunder at some point during the day at the destination (1 if there was, 0 if there wasn't)
+- TotalDelay = the amount of time the aircraft was delayed, in minutes (this is our dependent variable)
+
+### The goal
+
+Predict the response TotalDelay as a function of the other variables
+
+### Load libraries 
+
+```{r}
+library(tidyverse)
+library(caret)
+```
+
+### Load and prepare data
+
+We divide the Total Delay variable in just three categories:
+
+- No Delay
+- Minor Delay
+- Major Delay
+
+```{r}
+# Loading and preparing data
+Airlines <- read.csv("AirlineDelay.csv")
+
+# Create the three groups or categories (labels)
+Airlines$DelayClass = factor(ifelse(Airlines$TotalDelay == 0, "No Delay", ifelse
+                                    (Airlines$TotalDelay >= 30, "Major Delay", "Minor Delay")))
+levels(Airlines$DelayClass)
+
+Airlines$TotalDelay = NULL
+```
+
+### Split between training and testing sets
+
+```{r}
+spl = createDataPartition(Airlines$DelayClass, p = 0.8, list = FALSE)  # 80% for training
+
+AirlinesTrain = Airlines[spl,]
+AirlinesTest = Airlines[-spl,]
+
+```
+
+Are the classes well balanced?
+
+```{r}
+# Insert your code here
+table(AirlinesTrain$DelayClass)
+```
+
+
+No, they are not well balanced, there are major differences in the amount of observations in each category.
+
+# Logistic regression
+
+3 groups, hence 2 regressions (respect to the reference level, MajorDelay):
+
+```{r}
+
+```
+
+Interpretation?
+
+```{r}
+
+
+```
+
+
+### Prediction
+
+```{r}
+prob.test = predict(log.fit, newdata=AirlinesTest, type="response")
+head(prob.test)
+```
+
+The output are probabilities, no labels
+
+How to predict the labels?
+
+```{r}
+# Insert your code here
+
+# We can apply Bayes rule: maximum probability
+
+```
+
+
+### Confusion matrix
+
+Compute the confusion matrix for a given probability rule (Bayes rule in this case)
+
+```{r}
+ConfMat = table(pred.test,AirlinesTest$DelayClass)
+ConfMat
+```
+
+Or better with Caret:
+
+```{r}
+confusionMatrix(pred.test,AirlinesTest$DelayClass)
+```
+
+### Try the logistic regression model with all the predictors
+
+```{r}
+# Insert here your code
+
+log.fit = 
+
+prob.test = predict(log.fit, newdata=AirlinesTest, type="response")
+
+pred.test <- as.factor(levels(Airlines$DelayClass)[max.col(prob.test)])
+
+confusionMatrix(pred.test,AirlinesTest$DelayClass)
+
+```
+
+Some improvement. This is our benchmark.
+
+# The Caret package
+
+Caret package is highly recommended:
+- to evaluate performance abd calibrate sensitive parameters
+- to choose the best model across these parameters
+- to estimate model performance from a training set
+- Main function: train()
+
+These are the models for regression and classification:
+```{r}
+names(getModelInfo()) 
+```
+
+
+
+### Training models with Caret
+
+We are going to use 1 repeats of 5-fold cross validation
+
+```{r}
+ctrl <- trainControl(method = "repeatedcv", 
+                     repeats = 1,
+                     number = 5)
+```
+
+Because we have many predictors, we will try penalized logistic regression
+
+```{r}
+lrFit <- train(DelayClass ~ ., #formula, not a good idea to use all the variables, we do it for this example
+                method = "glmnet", #name
+                family = "multinomial", #distribution of the columns, it's gaussian by default
+                data = AirlinesTrain, #mandatory argument
+                preProcess = c("center", "scale"), #what preprocessing we do
+                tuneGrid = expand.grid(alpha = seq(0, 2, 0.1), lambda = seq(0, .1, 0.01)), #parameter tuning
+                metric = "Accuracy",
+                trControl = ctrl)
+print(lrFit)
+```
+
+### Prediction and performance
+
+```{r}
+lrPred = predict(lrFit, AirlinesTest) #caret guesses we are using predict.glmnet
+confusionMatrix(lrPred, AirlinesTest$DelayClass)
+```
+
+We have improved the accuracy to 55% more or less
+
+### Variable importance
+
+```{r}
+lr_imp <- varImp(lrFit, scale = F)
+plot(lr_imp, scales = list(y = list(cex = .95)))
+```
+
+We can reduce the noise, or increase the accuracy by considering just two classes: delay or no delay
+
+But the information (or precision) of the output will be weaker or less practical...
+
+# Reducing noise
+
+We join in the category 'Delay', 'Minor Delay' and 'Major Delay'.0
+
+```{r}
+Airlines$DelayClass = factor(ifelse(Airlines$DelayClass == "No Delay", "No Delay", "Delay"))
+levels(Airlines$DelayClass)
+
+AirlinesTrain = Airlines[spl,]
+AirlinesTest = Airlines[-spl,]
+
+table(AirlinesTrain$DelayClass)
+```
+
+Very well-balanced classes
+
+### Train again
+
+Let's try now penalized LDA
+
+```{r}
+ldaFit <- train(DelayClass ~ ., 
+                #method = "lda", 
+                #method = "PenalizedLDA", 
+                method = "sparseLDA", 
+                #method = "stepLDA", 
+                data = AirlinesTrain,
+                preProcess = c("center", "scale"),
+                metric = "Accuracy",
+                tuneLength = 10,
+                trControl = ctrl)
+print(ldaFit)
+
+ldaPred = predict(ldaFit, AirlinesTest)
+confusionMatrix(ldaPred,AirlinesTest$DelayClass)
+```
+
+Now the accuracy is around 70% (65.33%)
+
+But are all the errors equally important?
+
+Usually not...
+
+The most important error for the company is when there's a delay but classified as no delay (337, bottom-left of the table) because they have to change the boarding gate and many more things in the last time, which costs money. If they know it and they can change it a day in advance they save a lot of money.
+
+# Cost-sensitive learning
+
+Using the optimal threshold in Bayes rule:
+
+```{r}
+lrProb = predict(ldaFit, newdata=AirlinesTest, type="prob")
+threshold = 0.5
+lrPred = rep("Delay", nrow(AirlinesTest))
+lrPred[which(lrProb[,2] > threshold)] = "No Delay"
+lrPred = factor(lrPred)
+confusionMatrix(lrPred, AirlinesTest$DelayClass)
+```
+
+We can attain the maximum accuracy. But that does not have to imply a good decision or value...
+
+Other performance measures:
+
+```{r}
+confusionMatrix(lrPred,AirlinesTest$DelayClass)$byClass
+```
+
+Changing the threshold allows us to control better one of type the errors (by increasing the other one)
+
+What is the most important (dangerous) error for you?
+
+How can we change the threshold to reduce this error?
+
+```{r}
+threshold = 0.6
+lrPred = rep("Delay", nrow(AirlinesTest))
+lrPred[which(lrProb[,2] > threshold)] = "No Delay"
+lrPred = factor(lrPred)
+confusionMatrix(lrPred,AirlinesTest$DelayClass)
+```
+
+Has the dangerous error been decreased?
+
+What happens to the other error? What happens to the accuracy?
+
+What is the optimal threshold?
+
+Of course, we can always set the threshold = 1 to minimize the dangerous error, i.e. we can always predict all the flights are going to be delayed. But is this a reasonable decision?
+
+### Optimization of decision rule
+
+Imagine we are provided the next relative cost-matrix for each flight:
+
+| Prediction/Reference | Delay | No Delay  |
+| -------------------- | -----:| ---------:|
+| Delay                |     1 |      0.5  |
+| No Delay             |     2 |      0.0  |
+
+With this information, how can we make an optimal decision?
+
+```{r}
+relative.cost <- c(1, 2, 0.5, 0.0)
+
+CM = confusionMatrix(lrPred, AirlinesTest$DelayClass)$table
+sum(relative.cost*CM)
+
+cost.i = matrix(NA, nrow = 30, ncol = 9)
+# 30 replicates for training/testing sets for each of the 10 values of threshold
+
+j <- 0
+ctrl <- trainControl(method = "none")
+
+for (threshold in seq(0.45,0.85,0.05)){
+
+  j <- j + 1
+  cat(j)
+  for(i in 1:30){
+
+    # partition data intro training (80%) and testing sets (20%)
+    d <- createDataPartition(AirlinesTrain$DelayClass, p = 0.8, list = FALSE)
+    # select training sample
+    
+    train<-AirlinesTrain[d,]
+    test <-AirlinesTrain[-d,]  
+    
+    ldaFit <- train(DelayClass ~ ., 
+                    #method = "lda", 
+                    #method = "PenalizedLDA", 
+                    method = "sparseLDA", 
+                    #method = "stepLDA", 
+                    data = train,
+                    tuneGrid = data.frame(NumVars=30, lambda=0.1),
+                    preProcess = c("center", "scale"),
+                    metric = "Accuracy",
+                    trControl = ctrl)
+    lrProb = predict(ldaFit, test, type="prob")
+    
+    lrPred = rep("Delay", nrow(test))
+    lrPred[which(lrProb[,2] > threshold)] = "No Delay"
+    lrPred = factor(lrPred)
+    
+    CM = confusionMatrix(lrPred, test$DelayClass)$table
+    
+    cost.i[i,j] <- sum(relative.cost*CM)/nrow(test) # unitary cost
+    
+  }
+}
+
+```
+
+Let's see the distribution of the cost for different values of the threshold
+
+```{r}
+boxplot(cost.i, main = "Hyper-parameter selection",
+        ylab = "cost",
+        xlab = "threshold value",names = seq(0.45,0.85,0.05),col="royalblue2")
+```
+
+It seems the optimal threshold is around 0.65
+
+Let's apply then this threshold rule to make better decisions
+
+# Final prediction
+
+```{r}
+# optimal threshold
+threshold = 0.65
+
+# final prediction
+ldaFit <- train(DelayClass ~ ., 
+                #method = "lda", 
+                #method = "PenalizedLDA", 
+                method = "sparseLDA", 
+                #method = "stepLDA", 
+                data = AirlinesTrain,
+                tuneGrid = data.frame(NumVars=30, lambda=0.1),
+                preProcess = c("center", "scale"),
+                metric = "Accuracy",
+                trControl = ctrl)
+ldaPred = predict(ldaFit, AirlinesTest)
+
+lrProb = predict(ldaFit, newdata=AirlinesTest, type="prob")
+lrPred = rep("Delay", nrow(AirlinesTest))
+lrPred[which(lrProb[,2] > threshold)] = "No Delay"
+lrPred = as.factor(lrPred)
+CM = confusionMatrix(lrPred, AirlinesTest$DelayClass)$table
+sum(relative.cost*CM)/nrow(AirlinesTest) # unitary cost
+```
+
+
