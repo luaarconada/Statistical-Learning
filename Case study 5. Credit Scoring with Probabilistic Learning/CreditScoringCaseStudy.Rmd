@@ -127,7 +127,7 @@ nrow(testing) #104999
 table(training$Creditability)/length(training$Creditability)
 ```
 
-93% good loans, 7% bad loans: unbalanced dataset (same unbalance with 40% training and 30%). For a naive director (all people classified as good), the accuracy in next week's clients will be 93% (+-2%, some uncertainty). This director is going to spend a lot of many in that 7% of the bad people, he is going to fail with very few people, 7%, but he is going to lose millions (statistically very good, economically a disaster).
+93% good loans, 7% bad loans: unbalanced dataset (same unbalance with 40% training and 30%). For a naive director (all people classified as good), the accuracy in next week's clients will be 93% (+-2%, some uncertainty). This director is going to spend a lot of money in that 7% of the bad people, he is going to fail with very few people, 7%, but he is going to lose millions (statistically very good, economically a disaster).
 
 ### Data cleaning and Feature Engineering
 
