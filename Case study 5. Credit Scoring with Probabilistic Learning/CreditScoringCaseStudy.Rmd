@@ -314,13 +314,13 @@ Table of profits:
 
 | Prediction/Reference | Good  |  Bad  |
 | -------------------- | -----:| -----:|
-| Good                 |  0.12 |  -1.0 | # 12% is the interest rate in 2 years, annual interest rate of 6%
+| Good                 |  0.12 |  -1.0 | 12% is the interest rate in 2 years, annual interest rate of 6%
 | Bad                  | -0.01 |  0.0  |
 
 For instance, a naive manager would incur a profit per applicant of
 $0.12\times0.93 - 1.0\times0.07 - 0.01\times0.0 + 0.0\times0.0 = 0.0416$
-The total cost due to the naive director is
-0.12*97310 - 1*6006 - 0.01*671 + 0*1012
+The total profit due to the naive director is
+$0.12\times97310 - 1\times6006 - 0.01\times671 + 0\times1012 = 11667 - 6006 -6.71 = 5654.29$
 
 This is the profit we should improve
 

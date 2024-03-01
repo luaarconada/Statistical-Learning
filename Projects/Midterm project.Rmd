@@ -1,0 +1,849 @@
+---
+title: "Midterm project"
+author: "Lúa Arconada Manteca"
+date: "28/02/2024"
+output:
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+# Set global options for code chunks in knitr
+knitr::opts_chunk$set(
+  echo = TRUE  # Display both code and output in the document
+)
+```
+
+```{r libraries, include = FALSE}
+# Load the nycflights13 package to access flight data from New York City airports in 2013
+library(nycflights13)
+
+# Load the ggplot2 package for creating graphics and visualizations
+library(ggplot2)
+
+# Load the dplyr package for data manipulation and transformation
+library(dplyr)
+
+# Load the tidyverse package, which includes dplyr and other packages for data manipulation, visualization, and analysis
+library(tidyverse)
+
+# Load the MASS package, which provides support functions and datasets for statistical analysis
+library(MASS)
+
+# Load the caret package for training and testing predictive models
+library(caret)
+
+# Load the e1071 package, which provides functions for statistical learning and data mining
+library(e1071)
+
+# Load the glmnet package, which implements regularized generalized linear models
+library(glmnet)
+
+# Load the nnet package, which implements feed-forward neural networks and multinomial log-linear models
+library(nnet)
+```
+
+First of all, we set a seed for reproducibility of the results.
+
+```{r}
+# Set the seed for random number generation to ensure reproducibility of results
+set.seed(42)
+```
+
+
+## Preprocessing and EDA
+
+### Goal
+
+We are the managers of the comfort department in an airport in New York city. We are in charge of providing and increasing the comfort of the clients and in order to do this, we are going to use a dataset later described that gives us information about 335220 flights that departed from NYC in 2013. We are going to focus on the variable `temp` that tells us the temperature, which is the most important aspect that affects the comfort of the clients in our scenario, so we are really interested in predicting it. We are focused in predicting this variable so we can warn the passengers and advice them on what type of clothes will be the most comfortable for the predicted temperature. They will be able to bring adequate clothes for that temperature and this will increase their comfort because they will not get hot, nor cold.
+
+In summary, we are going to use the variables in our dataset to predict the variable `temp`, which we are going to transform into a multicategorical variable with levels 'Low', 'Medium' and 'High', in order to be able to use the classifiers seen in class (naive Bayes, LDA, QDA and logistic).
+
+### Load the datasets
+
+First of all, since the datasets (`airlines`, `airports`, `flights`, `planes` and `weather`) are included in one of the previously loaded libraries `nycflights13`, we do not have to import them from a .csv or anything like that. We are going to join the datasets `flights` and `weather` by the common variables (`year`, `month`, `day`, `hour` and `origin`) to obtain a larger dataset with more variables. The resulting is a dataset with 335220 observations and 29 variables:
+
+- `year`: The year of the flight (2013 in this dataset).
+- `month`: The month of the flight (1-12).
+- `day`: The day of the month of the flight (1-31).
+- `dep_time`: Departure time, local timezone.
+- `sched_dep_time`: Scheduled departure time.
+- `dep_delay`: Departure delay, in minutes.
+- `arr_time`: Arrival time, local timezone.
+- `sched_arr_time`: Scheduled arrival time.
+- `arr_delay`: Arrival delay, in minutes.
+- `carrier`: Airline carrier code.
+- `flight`: Flight number.
+- `tailnum`: Aircraft tail number.
+- `origin`: Origin airport code.
+- `dest`: Destination airport code.
+- `air_time`: Flight time, in minutes.
+- `distance`: Flight distance, in miles.
+- `hour`: The hour of the flight (0-23).
+- `minute`: The minute of the scheduled departure time.
+- `time_hour.x`: Date and time of the scheduled departure time, in POSIXct format.
+- `temp`: Temperature, in Fahrenheit.
+- `dewp`: Dew point temperature, in Fahrenheit.
+- `humid`: Relative humidity, as a percentage.
+- `wind_dir`: Wind direction, in degrees (0-360).
+- `wind_speed`: Wind speed, in miles per hour.
+- `wind_gust`: Wind gust speed, in miles per hour.
+- `precip`: Precipitation, in inches.
+- `pressure`: Atmospheric pressure, in inches of mercury.
+- `visib`: Visibility, in miles.
+- `time_hour.y`: Date and time of the observation, in POSIXct format.
+
+```{r datasets}
+# We join the datasets flights and weather
+data_whole =  flights %>%
+  # Perform an inner join between flights and weather datasets by some variables
+  inner_join(weather, by = c("year", "month", "day", "hour", "origin"))
+```
+
+### Eliminate unnecesary variables and various modifications
+
+First of all, we are going to eliminate all the variables related to time (`year`, `month`, `day`, `hour`, `minute`, `time_hour.x` and `time_hour.y`), we also eliminate `dep_time`and `sched_dep_time` because the information of both variables is stored in the variable `dep_delay`=`dep_time`-`sched_dep_time`. The same happens with `arr_time` and `sched_arr_time`, which we eliminate because we have `arr_delay`. Moreover, we eliminate `tailnum` and `flight` because they are like an id variable which does not give us any useful information. After this eliminations, our dataset consists of the same number of observations (335220), but now we have 16 variables.
+
+In addition, we also change the variables related to temperature (`dewp` and `temp`), we transform them so the unit is no longer Fahrenheit, but Celsius. We also set the multicategorical variables (`carrier` and `origin`) as factors and display the first lines of the dataset.
+
+```{r eliminate variables and factor}
+# Eliminate the specified variables from the dataset
+data_pre = data_whole[,-c(1,2,3,4,5,7,8,11, 12, 14, 17,18, 19,29)]
+
+# Convert temperature and dewpoint from Fahrenheit to Celsius
+data_pre$temp = (data_pre$temp - 32) * (5/9)
+data_pre$dewp = (data_pre$dewp - 32) * (5/9)
+
+# Convert categorical variables to factor type
+data_pre[, c('carrier', 'origin')] <- lapply(data_pre[, c('carrier', 'origin')], function(x) as.factor(x))
+
+# Display the structure and first few rows of the preprocessed dataset
+glimpse(data_pre)
+head(data_pre)
+```
+
+### Missing values
+
+Now we wanna study the variables and to do that we compute a summary to see some details like the mean, median, minimun, maximum, missing values (NA's),...
+
+```{r summary data}
+# Summarize the data frame
+summary(data_pre)
+```
+
+We are interested in dealing with the missing values and getting rid of them in the best way we can. We compute the percentage of observations with missing values in each variable.
+
+```{r percentage nas}
+# Compute the percentage of missing values for each variable
+sapply(data_pre, function(x) mean(is.na(x)) * 100)
+```
+
+We can see that our variable `wind_gust` out of our 335220 observations we have, it has NA's in 254835 (76% of the observations), so we decide to eliminate this variable.
+
+```{r wind_gust elim}
+# Remove the variable 'wind_gust' from the dataset
+data_pre <- data_pre[, -12]
+```
+
+We also see that we have missing values in the variables `dep_delay`, `arr_delay`, `air_time`, `temp`, `dewp`, `humid`, `wind_dir`, `wind_speed` and `pressure`. However, we do not eliminate these variables, instead what we do is compute the missing values. We decide not to eliminate them because the percentage of missing values is very low in each variable: `dep_delay` has 2.45%, `arr_delay` has 2.80%, `air_time` has 2.80%, `temp` has 0.005%, `dewp` has 0.005%, `humid` has 0.005%, `wind_dir` has 2.46%, `wind_speed` has 0.02% and `pressure` has 11.11%.
+
+To deal with these missing values, we saw in class the following method, which needed the train/test partition, but since we are not using it, we are going to make the partition after computing the missing values.
+
+```{r mice, eval = FALSE, echo = FALSE}
+# Load the mice package for multiple imputation
+library(mice)
+
+# Impute missing values in the training data using mice package
+# m=2 sets the number of imputations to 2
+# maxit=4 sets the maximum number of iterations to 4
+# method = "rf" specifies the random forest method for imputation
+train_data = mice(train_data, m = 2, maxit = 4, method = "rf")
+
+# Load the function to impute new observations based on the previous imputation model
+source("https://raw.githubusercontent.com/prockenschaub/Misc/master/R/mice.reuse/mice.reuse.R")
+
+# Impute missing values in the test data using the previously trained imputation model
+# maxit = 1 sets the maximum number of iterations to 1
+test_data = mice.reuse(train_data, test_data, maxit = 1)[[1]]
+```
+
+However, it has a great time and computational cost, so we will use a different approach. The missing values are all in numeric variables, so we want to see the distributions of the data and if they have outliers, so we compute the histograms (to see skewness and symmetry) and boxplots (to see outliers) of each variable. If the variable is normally distributed or approximately symmetric without extreme outliers we exchange the NA's with the mean of the variable. However, if it is heavily skewed or with outliers, we substitute it with the median.
+
+```{r histograms}
+# Take only the variables with missing values
+missing_vars = c("dep_delay", "arr_delay", "air_time", "temp", "dewp", "humid", "wind_dir", "wind_speed", "pressure")
+
+# Create histograms for symmetry and skewness of each variable
+for(var in missing_vars) {
+  # Plot histogram for the current variable
+  hist(data_pre[[var]], 
+       main = paste("Histogram of", var),    # Title of the plot
+       xlab = var,                           # Label for x-axis
+       ylab = "Frequency",                   # Label for y-axis
+       col = "skyblue",                      # Fill color of bars
+       border = "black"                      # Border color of bars
+  )
+}
+```
+
+```{r boxplot}
+# Extract the columns with missing values from the dataset
+missing = data_pre[,missing_vars]
+
+# Create boxplots to identify outliers in each variable
+boxplot(missing,                       # Data for boxplot
+        outline = TRUE,                # Show outliers
+        col = 'skyblue',               # Fill color of boxes
+        border = 'black'               # Border color of boxes
+)
+```
+
+We can see, following the criteria we said before, that we have to use the mean in the variables `temp` and `pressure`, and the median in the variables `dep_delay`, `arr_delay`, `air_time`, `dewp`, `humid`, `wind_dir` and `wind_speed`.
+
+```{r nas compute}
+# Replace missing values with median for dep_delay
+data_pre$dep_delay = replace_na(data_pre$dep_delay, median(data_pre$dep_delay, na.rm=TRUE))
+
+# Replace missing values with median for arr_delay
+data_pre$arr_delay = replace_na(data_pre$arr_delay, median(data_pre$arr_delay, na.rm=TRUE))
+
+# Replace missing values with median for air_time
+data_pre$air_time = replace_na(data_pre$air_time, median(data_pre$air_time, na.rm=TRUE))
+
+# Replace missing values with mean for temp
+data_pre$temp = replace_na(data_pre$temp, mean(data_pre$temp, na.rm=TRUE))
+
+# Replace missing values with median for dewp
+data_pre$dewp = replace_na(data_pre$dewp, median(data_pre$dewp, na.rm=TRUE))
+
+# Replace missing values with median for humid
+data_pre$humid = replace_na(data_pre$humid, median(data_pre$humid, na.rm=TRUE))
+
+# Replace missing values with median for wind_dir
+data_pre$wind_dir = replace_na(data_pre$wind_dir, median(data_pre$wind_dir, na.rm=TRUE))
+
+# Replace missing values with median for wind_speed
+data_pre$wind_speed = replace_na(data_pre$wind_speed, median(data_pre$wind_speed, na.rm=TRUE))
+
+# Replace missing values with mean for pressure
+data_pre$pressure = replace_na(data_pre$pressure, mean(data_pre$pressure, na.rm=TRUE))
+```
+
+We check that there are no remaining missing values with the following function.
+
+```{r check nas left}
+# Function to check for missing values
+check_missing_values <- function(data) {
+  if (any(is.na(data))) {          # Check if any missing values exist
+    message("There are missing values left.")  # Print a message if missing values are found
+  } else {
+    message("There are no missing values left.")  # Print a message if no missing values are found
+  }
+}
+
+# Call the function with our dataset
+check_missing_values(data_pre)  # Check missing values in data_pre dataset
+```
+
+### Prepare the target variable:
+
+Lastly, before making the train/test partition, since we are going to predict the variable `temp` using the rest of the variables as predictors and the methods seen in class, we need our target variable `temp` to be categorical. Instead of only creating two levels in the variable and as a consequence making it binary, we are going to make three because the project will be more difficult, but more interesting.
+
+We create three levels: "low" for temperatures lower than 0 ºC, "medium" for temperatures between 0ºC and 15ºC and "high" for temperatures higher than 15ºC.
+
+```{r temp create levels}
+# Assign data_pre to a new variable data
+data = data_pre
+
+# Convert the 'temp' variable into categorical data based on temperature ranges
+data$temp = cut(data$temp,                      # Variable to be converted
+                breaks = c(-Inf, 0, 15, Inf),   # Breakpoints for temperature ranges
+                labels = c("Low", "Medium", "High")  # Labels for each temperature range
+)
+```
+
+We can see in the following code that the classes are not well balanced. We did it on purpose to use it later in the project. We will later join the 'Medium' and 'High' levels to have two incredibly unbalanced categories, however, we will work with the models and choose the most accurate one while we have the three categories.
+
+```{r table temp}
+# Display the frequency table of the 'temp' variable
+table(data$temp)
+```
+
+### Train/test data split
+
+After creating classifiers and training them, we will want to see how well they perform, how accurate they are. To do this, we need to do a train/test partition. We do this so we can use the train partition to fit the model and the test partition to measure its performance. WE make a partition with 40% on the training and 60% on the testing.
+
+The train/test partition helps to prevent overfitting, which occurs when a model learns the training data too well and performs poorly on new data. By evaluating the model on a separate testing set, you can get a more accurate estimate of its performance on unseen data. 
+
+```{r train/test split}
+# Shuffle the rows of the dataset
+shuffled_data <- data[sample(nrow(data)), ]
+
+# Create a train/test partition with the shuffled data
+train_index <- createDataPartition(
+  y = shuffled_data$temp,  # Specify the response variable for stratified sampling
+  p = 0.4,                 # Proportion of data for the training set, 40%
+  list = FALSE             # Return indices as a vector, not as a list
+)
+
+# Create the training and testing datasets
+train_data <- shuffled_data[train_index, ]  # Subset of shuffled_data for training
+test_data <- shuffled_data[-train_index, ]  # Subset of shuffled_data for testing
+
+```
+
+### Exploratory Data Analysis
+
+Exploratory Data Analysis (EDA) is an approach to analyzing datasets in order to summarize their main characteristics, often using visual methods. Now that we have done the partition, we are going to carry this kind of analysis on the train dataset.
+
+#### Univariate analysis
+
+Here we observe the distributions of the numerical variables via a histogram of frequency for each variable.
+
+```{r histograms numerical}
+# Define numeric variables
+numeric_vars <- c('dep_delay', 'arr_delay', 'air_time', 'distance', 'dewp', 'humid', 'wind_dir', 'wind_speed', 'precip', 'pressure', 'visib')
+
+# Create histograms for each numeric variable in the training dataset
+for(var in numeric_vars) {
+  hist(train_data[[var]],               # Data for histogram
+       main = paste("Histogram of", var),  # Title of the histogram
+       xlab = var,                      # Label for x-axis
+       ylab = "Frequency",              # Label for y-axis
+       col = "skyblue",                 # Fill color of bars
+       border = "black"                 # Border color of bars
+  )
+}
+```
+
+Here we see how the observations in our categorical variables are distributed via barplots for each variable.
+
+```{r barplots categorical}
+# Define categorical variables
+categorical_vars <- c('carrier', 'origin', 'temp')
+
+# Create bar plots for each categorical variable in the training dataset
+for(var in categorical_vars) {
+  # Compute frequency table for the current categorical variable
+  freq_table <- table(train_data[[var]])
+  
+  # Create a bar plot
+  barplot(freq_table,                  # Data for bar plot
+           main = paste("Bar plot of", var),  # Title of the bar plot
+           xlab = var,                  # Label for x-axis
+           ylab = "Frequency",          # Label for y-axis
+           col = "skyblue",             # Fill color of bars
+           border = "black"             # Border color of bars
+  )
+}
+```
+
+#### Bivariate analysis
+
+We are going to explore some of the combinations of variables by pairs to see the relationship between them. For example, `dep_delay` and `arr_delay`.
+
+```{r scatterplot dep/arr_delay}
+# Scatter plot using ggplot2
+ggplot(train_data, aes(x = dep_delay, y = arr_delay)) +  # Specify the data and aesthetics
+  geom_point(alpha = 0.5, color = "skyblue") +           # Add points with transparency and color
+  labs(title = "Scatter plot of departure delay vs. arrival delay",  # Set the title and axis labels
+       x = "Departure delay", 
+       y = "Arrival delay") + 
+  theme(plot.title = element_text(hjust = 0.5))           # Adjust the title position
+```
+
+We can see that, if for example we start with 100 minutes of departure delay, we usually will arrive with 100 minutes or a little more of arrival delay, which makes sense. We can also see that if we have a little of departure delay, some planes make up the time and arrive on time up to, when the departure delay time is up to an amount that seems to be near 250 minutes. Moreover, we can see that the majority of flights leave with a `dep_delay` between 0 and 375 minutes and arrive with an `arr_delay` in the same range. We can see pretty clearly a high correlation between this pair of variables.
+
+Another pair of variables that seems reasonable to think will also have high correlation are `air_time` and `distance`.
+
+```{r scatterplot air_time/distance}
+# Scatter plot using ggplot2
+ggplot(train_data, aes(x = distance, y = air_time)) +  # Specify the data and aesthetics
+  geom_point(alpha = 0.5, color = "skyblue") +       # Add points with transparency and color
+  labs(title = "Scatter plot of distance vs. air time",  # Set the title and axis labels
+       x = "Distance", 
+       y = "Air time") + 
+  theme(plot.title = element_text(hjust = 0.5))       # Adjust the title position
+```
+
+We can see once again a high correlation between this variables, as we expected. However, we may have pairs of variables that do not check this property. For example, `pressure` and `distance` seems reasonable to think that are not correlated.
+
+```{r scatterplot humid/distance}
+# Scatter plot using ggplot2
+ggplot(train_data, aes(x = humid, y = distance)) +  # Specify the data and aesthetics
+  geom_point(alpha = 0.5, color = "skyblue") +     # Add points with transparency and color
+  labs(title = "Scatter plot of humidity vs. distance",  # Set the title and axis labels
+       x = "Humidity", 
+       y = "Distance") + 
+  theme(plot.title = element_text(hjust = 0.5))     # Adjust the title position
+```
+
+We observe a completely different pattern that does not represent high correlation as the previous pair of variables. We are now going to use a boxplot to observe other pairs of variables where at least one will be categorical. We did not include categorical variables in the scatter plots because it would not be very informative. For example, it may be interesting to see the `dep_delay` by `carrier` boxplot in case we are planning a vacation, so we may want to avoid the ones with more delays and choose one with less.
+
+```{r boxplot carrier/dep_delay}
+# Boxplot using ggplot2
+ggplot(train_data, aes(x = carrier, y = dep_delay)) +  # Specify the data and aesthetics
+  geom_boxplot(fill = "skyblue", color = "black") +   # Add boxplots with fill and border color
+  labs(title = "Box plot of departure delay by carrier",  # Set the title and axis labels
+       x = "Carrier", 
+       y = "Departure delay") + 
+  theme(plot.title = element_text(face = "bold", hjust = 0.5))  # Adjust the title font and position
+```
+
+We may also want to see the `humid` by `temp` representation to see its relation.
+
+```{r boxplot humid/temp}
+# Boxplot using ggplot2
+ggplot(train_data, aes(x = temp, y = humid)) +      # Specify the data and aesthetics
+  geom_boxplot(fill = "skyblue", color = "black") + # Add boxplots with fill and border color
+  labs(title = "Box plot of humidity by temperature",  # Set the title and axis labels
+       x = "Temperature", 
+       y = "Humidity") + 
+  theme(plot.title = element_text(face = "bold", hjust = 0.5))  # Adjust the title font and position
+```
+
+As a final bivariate analysis, we are going to compute the correlation matrix, but only of the numeric variables.
+
+```{r correlation_matrix}
+# Compute the correlation matrix for numeric variables in the training dataset
+correlation_matrix <- cor(train_data[, numeric_vars])
+correlation_matrix
+```
+
+Here, we can corroborate what we showed before: `dep_delay` and `arr_delay` are highly correlated (0.91), as well as `air_time` and `distance` (0.98), while `humid` and `distance` are not (0.03). 
+
+#### Multivariate analysis
+
+Now, instead of doing those scatter plots one by one for each possible pair of variables, we would be computing the pairwise scatter plot but we do not because it is highly time and computational costly because  we have a high number of variables. Instead, what we are going to do is compute a heat map of the previously computed correlation matrix.
+
+```{r heatmap}
+# Convert correlation matrix to a matrix
+cor_matrix <- as.matrix(correlation_matrix)
+
+# Create the correlation heatmap
+heatmap(cor_matrix, 
+        Rowv = NA,         # Do not reorder rows
+        Colv = NA,         # Do not reorder columns
+        col = colorRampPalette(c("blue", "white", "red"))(100),  # Define color scheme
+        scale = "none",    # Do not scale rows or columns
+        main = "Correlation heatmap of numeric variables"        # Set the title of the plot
+)
+
+# Add color legend
+legend("bottomright", 
+       legend = c("Low", "Medium", "High"),                     # Legend labels
+       fill = colorRampPalette(c("blue", "white", "red"))(3),   # Colors corresponding to legend labels
+       title = "Correlation",                                   # Title of the legend
+       bg = "transparent"                                       # Transparent background
+)
+```
+
+We can observe once again that `dep_delay` and `arr_delay` are highly correlated, as well as `air_time` and `distance`, but `humid` and `distance` are not. On top of that, we can see how correlated are each and every pair of variables. As the legend says, the redder the square, the more correlated they are and the bluest, the lowest correlation.
+
+#### Feature selection 
+
+Since we have some pair of variables with incredibly high collinearity, which is going to give us errors later on in our models, we are going to do some variable selection to get rid of all this redundant information by reducing the multicollinearity.
+
+Hence, we are going to eliminate one from each pair, so we get rid of `dep_delay` and `air_time`.
+
+```{r eliminatevarcorrelation}
+# Remove variables `dep_delay` and `air_time` from train_data
+train_data <- train_data[,-c(1,5)]
+
+# Remove variables `dep_delay` and `air_time` from test_data
+test_data <- test_data[,-c(1,5)]
+```
+
+
+## Bayesian classifiers
+
+A naive classifier would have trouble knowing where to classify a new observation, because as we can see in the following table, the two more numerous levels ('Medium' and 'High') have approximately the same percentage of observations, 44% and 47%.
+
+```{r percentage obs temp}
+# Calculate relative frequencies of each category in the 'temp' variable
+table(train_data$temp) / length(train_data$temp)
+```
+
+Even a naive classifier would have trouble knowing where to classify the new observations because we do not have an outstanding level with many more observations than the others. However, if the classifier follows the rule of classifying as the level with more observations,then every observation would be classified as 'High'. We would have an accuracy of 47%, which is incredibly low. Let's check the methods we learned in class to improve it.
+
+### Naive Bayes
+
+Naive Bayes is a probabilistic classifier based on Bayes' theorem with the "naive" assumption of conditional independence between the features given the class variable. It's particularly useful for classification tasks, even when the input variables are correlated.
+
+In a trinary classification context, Naive Bayes calculates the probability of an observation belonging to each class given its feature values. It does this by computing the likelihood of the features given each class and multiplying it by the prior probability of each class. Then, it selects the class with the highest posterior probability as the predicted class for the observation.
+
+One of the main advantages of Naive Bayes is its simplicity and computational efficiency, especially for large datasets with many features. It also performs well in practice even when the independence assumption is violated to some extent. Additionally, Naive Bayes can handle both numerical and categorical features.
+
+However, the assumption of feature independence may not hold true in real-world scenarios, which can lead to suboptimal performance, especially when dealing with highly correlated features. Additionally, Naive Bayes tends to be overly confident in its predictions, often resulting in poorly calibrated probability estimates.
+
+Firstly, we fit the model with our training data and display it.
+
+```{r naivemodel}
+# Train a naive Bayes classifier
+naive_model <- naiveBayes(temp ~ ., train_data)
+
+# Display a summary of the trained model
+summary(naive_model)
+```
+
+Then, we obtain the predicted classes and display the first too.
+
+```{r prednaive}
+# Predict the target variable 'temp' using the trained naive Bayes classifier
+pred_naive <- predict(naive_model, newdata = test_data)
+
+# Display the first few predictions
+head(pred_naive)
+```
+
+Finally, we compute the confusion matrix.
+
+The confusion matrix is a table that is often used to describe the performance of a classification model on a set of test data for which the true values are known. It allows visualization of the performance of an algorithm and helps in understanding the mistakes made by the classifier. 
+
+The confusion matrix has columns representing the actual classes and rows representing the predicted classes. The cells of the matrix show the counts of observations that were correctly classified and incorrectly classified.
+
+In a binary classification problem, the confusion matrix has two rows and two columns, representing the predicted and actual classes (e.g., "positive" and "negative"). For multiclass classification problems, the confusion matrix can have more rows and columns, corresponding to the different classes (3 in our scenario).
+
+The diagonal elements of the confusion matrix represent the instances that were classified correctly, while off-diagonal elements represent misclassifications. By examining the confusion matrix, one can calculate various performance metrics such as accuracy, Kappa, sensitivity, specificity, prevalence, precision, recall, and F1-score to evaluate the model's performance.
+
+```{r confmatrixnaive}
+# Compute the confusion matrix
+confusionMatrix(pred_naive, test_data$temp)
+```
+
+We can see that the accuracy of this model is 77.82%.
+
+### LDA
+
+Linear Discriminant Analysis (LDA) is a classification technique used to find a linear combination of features that characterizes or separates two or more classes of objects or events. It operates under the assumption that the features in the data follow a multivariate normal distribution and that the classes have the same covariance matrix. LDA works by maximizing the separation between classes while minimizing the variation within each class. 
+
+It works by transforming the original data into a lower-dimensional space while maximizing the separation between classes. This is achieved by finding linear combinations of features that best discriminate between classes, resulting in new axes called discriminant functions. LDA aims to minimize the variance within each class while maximizing the distance between class means. When new data is presented, LDA assigns it to the class with the highest posterior probability based on these discriminant functions. Additionally, LDA provides a probabilistic framework for classification, allowing for the estimation of class probabilities. It is commonly used in various fields such as pattern recognition, bioinformatics, and finance due to its simplicity, interpretability, and effectiveness in handling multicollinear data.
+
+It is particularly effective when the classes are well-separated and the assumptions of the model hold true. However, it may not perform well when the data violates the underlying assumptions, such as non-normality or unequal class covariances.
+
+Firstly, we fit our model with the training data and display it.
+
+```{r ldamodel}
+# Fit LDA model using train_data
+lda_model <- lda(temp ~ ., data = train_data)
+
+# Print summary of the LDA model
+summary(lda_model)
+```
+
+Then, we predict the class of the observations in the test dataset.
+
+```{r predlda}
+# Predict the target variable 'temp' using the trained LDA model
+pred_lda <- predict(lda_model, test_data)$class
+
+# Display the first few predictions
+head(pred_lda)
+```
+
+Finally, we compute the confusion matrix.
+
+```{r confmatlda}
+# Compute the confusion matrix
+confusionMatrix(pred_lda, test_data$temp)
+```
+
+We can see that this model has a higher accuracy than the previous one, since it is 94.89%.
+
+### QDA
+
+Quadratic Discriminant Analysis (QDA) is a classification technique that extends the principles of Linear Discriminant Analysis (LDA) to cases where the classes are not assumed to have the same covariance matrix. In QDA, each class is modeled by its own covariance matrix, which allows for more flexibility in capturing the underlying structure of the data.
+
+The method works by first estimating the probability distributions of the predictor variables (features) within each class. These distributions can be Gaussian or another suitable distribution depending on the nature of the data. QDA then uses Bayes' theorem to calculate the posterior probability of each class given a set of predictor variables.
+
+To classify a new observation, QDA calculates the posterior probability of each class and assigns the observation to the class with the highest probability. The decision boundaries between classes are quadratic in nature, hence the name Quadratic Discriminant Analysis.
+
+One advantage of QDA is its flexibility in handling nonlinear decision boundaries, which can lead to more accurate classification in certain cases compared to linear methods like LDA. However, QDA may require more training data to accurately estimate the covariance matrices for each class, and it can be computationally expensive, especially with large datasets.   
+
+Firstly, we fit the model with the numerical variables and display it.
+
+```{r qdamodel}
+# Fit QDA model using a subset of predictor variables
+qda_model <- qda(temp ~ ., train_data[,c('arr_delay', 'distance', 'dewp', 'humid', 'wind_dir', 'wind_speed', 'precip', 'pressure', 'visib','temp')])
+
+# Print summary of the QDA model
+qda_model
+```
+
+We now predict the test dataset and display the firsts.
+
+```{r predqda}
+# Predict the target variable 'temp' using the trained QDA model
+pred_qda <- predict(qda_model, test_data)$class
+
+# Display the first few predictions
+head(pred_qda)
+```
+
+We finally compute the confusion matrix.
+
+```{r confmatqda}
+# Compute the confusion matrix
+confusionMatrix(pred_qda, test_data$temp)
+```
+
+We see that the accuracy is 94.78%, slightly worse than the previous one.
+
+### Logistic Regression
+
+Logistic regression is a statistical method used for binary classification, but it can also be extended to handle multiple levels in the target variable, making it suitable for trinary classification problems.
+
+In logistic regression, the relationship between the predictor variables (features) and the probability of each class is modeled using the logistic function, which ensures that the predicted probabilities lie between 0 and 1.
+
+To handle multiple levels in the target variable, logistic regression employs a one-vs-rest (OvR) or one-vs-one (OvO) strategy. In the OvR approach, a separate logistic regression model is trained for each class, where the samples from the class of interest are labeled as positive (1) and samples from all other classes are labeled as negative (0). The model then predicts the probability of each class, and the class with the highest probability is assigned to the observation.
+
+Logistic regression works by estimating the coefficients associated with each predictor variable, which determine the impact of the variables on the predicted probabilities. These coefficients are estimated using maximum likelihood estimation, and the model is trained to minimize the logistic loss function.
+
+One advantage of logistic regression is its simplicity and interpretability, as the coefficients can be easily interpreted in terms of the log-odds of the outcome. Additionally, logistic regression can handle both numerical and categorical predictor variables. However, logistic regression assumes a linear relationship between the predictor variables and the log-odds of the outcome, which may not always hold true in practice.
+
+Firstly, we fit the model and display it.
+
+```{r logitmodel}
+# Fit multinomial logistic regression model
+logit_model <- multinom(temp ~ .-dewp, data = train_data, family = "multinomial")
+
+# Print summary of the multinomial logistic regression model
+summary(logit_model)
+```
+
+Afterwards, we obtain the predictions of our dataset and display some of them.
+
+```{r predlogit}
+# Predict the target variable 'temp' using the trained multinomial logistic regression model
+pred_logit <- predict(logit_model, newdata = test_data, type = "class")
+
+# Display the first few predictions
+head(pred_logit)
+```
+
+And, finally, we compute the confusion matrix.
+```{r confmatlogit}
+# Compute the confusion matrix
+confusionMatrix(pred_logit, test_data$temp)
+```
+
+We see that the accuracy is 58.03%, making it the worse model of the four we have seen.
+
+### Model choosing
+
+We look at the accuracy of the four models and choose the one with the biggest accuracy, so we choose the LDA model.
+
+
+## Risk analysis
+
+For this last part of the project we are now going to make our variable `binary` instead of using the 3 levels . We are going to divide it into 'Low' and 'High', where 'High' consists of the combination of our previous 'Medium' and 'High'.
+
+```{r}
+# Remove columns `dep_delay` and `air_time` from data_pre
+data_risk <- data_pre[, -c(1,5)]
+
+# Convert the 'temp' variable into categorical data based on temperature ranges
+data_risk$temp <- cut(data_risk$temp, breaks = c(-Inf, 0, Inf), labels = c("Low", "High"))
+
+# Calculate relative frequencies of each category in the 'temp' variable
+table(data_risk$temp) / length(data_risk$temp)
+```
+
+We can see that there is a very big imbalance, 9% 'Low' and 91% 'High'. In this situation, a naive manager of our department would classify all the flights as 'High' and the only error (9%) comes from the 'Low' flights that are classified as 'High'. Now we use our chosen model, LDA (we checked the four models again with `temp` being binary and it was still the most accurate one), to see its performance. Firstly, we do the train/test partition.
+
+```{r train/test splitbi}
+# Shuffle the rows of the dataset
+shuffled_databi <- data_risk[sample(nrow(data_risk)), ]
+
+# Create a train/test partition with the shuffled data
+train_indexbi <- createDataPartition(shuffled_databi$temp, p = 0.4, list = FALSE)
+
+# Create the training and testing datasets
+train_databi <- shuffled_databi[train_indexbi, ]  # Subset of shuffled_databi for training
+test_databi <- shuffled_databi[-train_indexbi, ]  # Subset of shuffled_databi for testing
+```
+
+Now we fit and display the LDA model with this datasets with `temp` as a binary variable.
+
+```{r ldamodelbi}
+# Fit LDA model using train_databi
+lda_modelbi <- lda(temp ~ ., data = train_databi)
+
+# Print summary of the LDA model
+summary(lda_modelbi)
+```
+
+We make the predictions with this last model and the test partition.
+
+```{r predldabi}
+# Predict the target variable 'temp' using the trained LDA model
+pred_ldabi <- predict(lda_modelbi, test_databi)$class
+
+# Display the first few predictions
+head(pred_ldabi)
+```
+
+We compute and display the confusion matrix.
+
+```{r confmatldabi}
+# Compute the confusion matrix
+CMbi <- confusionMatrix(pred_ldabi, test_databi$temp)
+
+# Display the confusion matrix
+CMbi
+```
+
+In the following table we can see that we have two errors: a 'Low' flight being classified as 'High' and a 'High' flight being classified as 'Low'. 
+
+```{r bitable}
+# Extract the confusion matrix table
+CMbi$table
+```
+
+We can see that the most common one with our LDA model is the first one with 10263 observations , while the other only has 380 observations. However, in our scenario, this problems do not have the same impact being the first one more negatively impactful in the comfort of our clients, which is what we want to maximize. Hence, we want to minimize this error.
+
+We can reduce this error by decreasing the probability threshold in our chosen model (LDA) and we can do this by modifying it according to some comfort effects. However, as a payoff, the other error will increase and the accuracy will decrease, but our focus is on maximizing the gain of comfort.
+
+In our scenario, if we predict correctly the temperature, the comfort of the clients will increase by 15% if it is 'High' and 20% if it is 'Low'. However, if we predict it to be 'Low' when it is in fact 'High' the impact will be a decrease in comfort by 10%. Furthermore, if the most impactful mistake that we established happened, we would lose the whole comfort of the passengers (decrease 100%).
+
+Table of comfort impact:
+
+| Prediction/Reference |  Low  |  High |
+| -------------------- | -----:| -----:|
+| Low                  |  0.20 | -0.10 |
+| High                 |  -1.0 |  0.15 |
+
+
+For instance, a naive manager would incur a comfort per client of:
+$0.20\times0.0 - 0.10\times0.0 - 1.0\times0.09 + 0.15\times0.91 = - 0.09 + 0.1365 = 0.0465$
+
+The total gain of comfort per client due to our LDA model in our scenario is:
+$(0.20\times8248 - 0.1\times380 - 1.0\times10263 + 0.15\times182240)/(8248 + 380 + 10263 + 182240) = (1649.6 - 38 - 10263 + 27336)/201131 = 0.093$
+
+This is the comfort profit gain we wanna improve by reducing the most costly errors and as a payoff increasing the others.
+
+Profit table as a vector:
+
+```{r profitunit}
+# Define profit or loss per unit for different scenarios
+profit_unit <- c(0.2, -1.0, -0.1, 0.15)
+
+# Display the profit or loss per unit for each scenario
+profit_unit
+```
+
+### Selecting the optimal threshold to give the loan
+
+The following code initializes a matrix named `profit_i` with dimensions 50x10, filled with `NA` values. It then sets up a loop to iterate over 10 different threshold values ranging from 0.1 to 0.9. Within each iteration of the threshold loop, another loop runs 50 times, representing 50 replicates. 
+
+During each replicate, the data is partitioned into training and testing sets using a 50/50 split. The training set is used to fit a Linear Discriminant Analysis (LDA) model (`lda_risk`) to predict the target variable `temp`. Posterior probabilities are computed for the testing set using this model. Based on these probabilities and the specified threshold, predictions are made for the testing set. If the probability of 'High' exceeds the threshold, the prediction is set to 'High'; otherwise, it's set to 'Low'. 
+
+A confusion matrix (`CM_risk`) is then computed to evaluate the accuracy of the predictions. This matrix is used to calculate the profit obtained from the classification, based on our predefined `profit_unit`. Finally, the profit value is stored in the `profit_i` matrix at the corresponding position determined by the current iteration of the threshold and replicate loops. 
+
+After all iterations, the `profit_i` matrix contains the profit values obtained for each combination of threshold and replicate. The resulting matrix is returned as the output of the code.
+
+```{r doubleloop, echo = FALSE}
+# Create an empty matrix to store profits for each replicate and threshold
+profit_i <- matrix(NA, nrow = 50, ncol = 10)
+
+# Define the thresholds for classifying into 'Low' or 'High' risk
+thresholds <- c(0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.75,0.8,0.9)
+
+# Initialize index for thresholds
+j <- 0
+
+# Loop through each threshold
+for (threshold in thresholds) {
+  # Increment index for thresholds
+  j <- j + 1
+  
+  # Display current threshold index
+  cat(j)
+  
+  # Loop through 50 replicates
+  for(i in 1:50){
+    # partition data 
+    d <- createDataPartition(train_databi$temp, p = 0.5, list = FALSE)
+    
+    # select training sample and test sample
+    train <- train_databi[d,]
+    test <- train_databi[-d,]  
+    
+    # Fit LDA classifier
+    lda_risk <- lda(temp ~ ., data=train) 
+    
+    # Get posterior probabilities
+    prob_risk <- predict(lda_risk, test)$posterior
+    
+    # Predictions with a given threshold
+    pred_risk <- rep("Low", nrow(test))
+    pred_risk[which(prob_risk[,2] > threshold)] <- "High"
+    
+    # Compute confusion matrix
+    CM_risk <- confusionMatrix(factor(pred_risk, levels = c('Low', 'High')), test$temp)
+    table_risk <- CM_risk$table
+
+    # Calculate profit for each client
+    profit_client <- sum(profit_unit * table_risk) / sum(table_risk) 
+    
+    # Store profit for each replicate and threshold
+    profit_i[i,j] <- profit_client
+  }
+}
+
+# Output the matrix of profits
+profit_i
+```
+
+### Summary of economic value of predictions
+
+We generate a boxplot to visualize the distribution of profits (`unit_profit`) obtained from different threshold values used in our classification task. The previously computed `profit_i` matrix, which contains profit values for each combination of threshold and replicate, is used as the data input for the boxplot.
+
+```{r boxplotrisk}
+# Create a boxplot of profits for different thresholds
+boxplot(profit_i,
+        main = "Hyper-parameter selection",  # Set the main title of the plot
+        ylab = "Unit profit",               # Set the y-axis label
+        xlab = "Threshold",                 # Set the x-axis label
+        names = c(0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.75,0.8,0.9),  # Set the names for x-axis ticks
+        col = "royalblue2"                 # Set the color of the boxplot
+)
+```
+
+We want to maximize the profit per unit, so we are interested in the threshold that gives us the maximum values of this profit, hence we are interested in the threshold whose box is the highest. Threshold values around 0.75 are reasonable, it seem that the best is 0.75. We compute the median of each of the columns of the `profit_i` matrix to be sure 0.75 is the best one.
+
+```{r meanboxplot}
+# Calculate the median of each column of the profit_i matrix
+apply(profit_i, 2, median)
+```
+
+The eighth, which is the corresponding to threshold 0.75 has the highest median, so 0.75 is in fact the best threshold.
+
+### Final prediction for testing set using the optimal hyper-parameter
+
+We fit and predict the LDA model with the computed best threshold (0.75) to obtain our final model and to see  that we have, in fact, increases the profit per unit. To see this last improvement, we compute the profit per client.
+
+```{r predloop}
+# Fit an LDA model using the training dataset
+lda_final <- lda(temp ~ ., data=train_databi)
+
+# Predict posterior probabilities for the test dataset
+prob_final <- predict(lda_final, newdata=test_databi)$posterior
+
+# Define the threshold for classifying as "High" risk
+threshold <- 0.75
+
+# Predict risk levels based on the threshold
+pred_final <- rep("Low", nrow(test_databi))
+pred_final[which(prob_final[,2] > threshold)] <- "High"
+
+# Compute confusion matrix
+CM_final <- confusionMatrix(factor(pred_final, levels = c("Low", "High")), test_databi$temp)$table
+
+# Calculate profit per client
+profit_client <- sum(profit_unit * CM_final) / sum(CM_final)
+
+# Output the profit per client
+profit_client
+```
+
+We have increased our profit per client from 0.093 to 0.1351676, which is what we wanted. So, the final chosen model is LDA with a 0.75 threshold.
