@@ -21,9 +21,9 @@ output:
 editor_options:
   chunk_output_type: console
 ---
-    
+
 ```{r global_options, include=T, echo = F}
-knitr::opts_chunk$set(echo = TRUE, warning=FALSE, message=FALSE)
+knitr::opts_chunk$set(echo = T, warning=FALSE, message=FALSE)
 ```
 
 # Motivation
@@ -40,17 +40,13 @@ In this case study, our **objective** will be to predict customer churn in a Tel
 
 Moreover, we will predict whether is at a high risk of churning and who are customers providing more income to the company than others: **risk learning**
 
-
-<center>
-<img src="churn.png" width="400"/>
-</center>
+<center><img src="churn.png" width="400"/></center>
 
 <br>
 
-
 ### Available Data
 
-Dataset from IBM Watson Telco Dataset: https://www.ibm.com/communities/analytics/watson-analytics-blog/guide-to-sample-datasets/
+Dataset from IBM Watson Telco Dataset: <https://www.ibm.com/communities/analytics/watson-analytics-blog/guide-to-sample-datasets/>
 
 This telco company is concerned about the number of customers leaving their landline business for cable competitors
 
@@ -79,23 +75,21 @@ glimpse(churnData)
 
 The dataset includes information about:
 
-- Customers who left within the last month: The column is called Churn
+-   Customers who left within the last month: The column is called Churn
 
-- Services that each customer has signed up for: phone, multiple lines, internet, online security, online backup, device protection, tech support, and streaming TV and movies
+-   Services that each customer has signed up for: phone, multiple lines, internet, online security, online backup, device protection, tech support, and streaming TV and movies
 
-- Customer account information: how long they have been a customer, contract, payment method, paperless billing, monthly charges, and total charges
+-   Customer account information: how long they have been a customer, contract, payment method, paperless billing, monthly charges, and total charges
 
-- Demographic info about customers: gender, age range, and if they have partners and dependents
-  
+-   Demographic info about customers: gender, age range, and if they have partners and dependents
+
 Summary:
 
 ```{r}
 summary(churnData)
 ```
 
-In variable `MultipleLines` we have as answers 'Yes', 'No'  and 'No phone service', we will join the last two. The same in `OnlineSecutiry` and some others (specified later).
-
-### Some exploratory analysis 
+### Some exploratory analysis
 
 ```{r}
 aggr(churnData, numbers = TRUE, sortVars = TRUE, labels = names(churnData),
@@ -103,39 +97,27 @@ aggr(churnData, numbers = TRUE, sortVars = TRUE, labels = names(churnData),
 ```
 
 11 NAs in TotalCharges, what to do?
-
-Since we have only 11 missing values, we are just going to eliminate the observations. Another solution is to compute the median. Moreover, he really likes the library mice.
+Since there are only 11 observations with missing values out of 7043, it is safe to delete them. Another good option would be to use the median, which might be better than the mean since this variables is asymmetric. It would also be possible to use the library `mice`, which imputes the missing values with the conditional mean of the column.
 
 ```{r, include=F}
-# Insert your code here
-# The best is to eliminate the observations because we have very few with NA's
+# remove observations with NA
 churnData = na.omit(churnData)
-churnData = churnData[,-1]
-# Other option
-# churnData$TotalCharges = replace_na(churnData$TotalCharges, median(churnData$TotalCharges, na.rm = TRUE))
-# The median is better than the mean because it is assymmetric
 ```
 
 Make some descriptive analysis
 
 ```{r}
 # Insert your code here
-barplot(table(churnData$Churn), main = 'Unbalanced?', col = 'deepskyblue')
+barplot(table(churnData$Churn), main='Unbalanced Data?', col='maroon3')
 
 prop.table(table(churnData$Churn))
 ```
 
-```{r}
-ggplot(churnData, aes(MonthlyCharges)) + geom_density(aes(group=Churn, colour=Churn, fill=Churn), alpha=0.1) +xlab("Monthly charges")
-```
-
-If people pay less than 40€, they are happy with the company and stay, you don't need to offer them to make them stay. If they pay 70€, they are unhappy and leave, this is where the risk of leaving is. Between 40€ and 70€ both things happen, we have freedom to make decisions there.
-
-26% of customers left the company in the last month. Many years ago this datasets was very unbalanced, but today it is more or less balanced because we have very good algorithms that can compensate.
+26% of customers left the company in the last month
 
 ### Some feature engineering
 
-We will change "No internet service to "No" for columns: 
+We will change "No internet service to "No" for columns:
 
 "OnlineSecurity", "OnlineBackup", "DeviceProtection", "TechSupport", "streamingTV", "streamingMovies"
 
@@ -147,8 +129,9 @@ for(i in c(9:14)) {
 }
 
 churnData$MultipleLines <- fct_collapse(churnData$MultipleLines, No = c("No","No phone service"))
-```
 
+churnData = churnData[,-1]
+```
 
 # Data splitting
 
@@ -164,34 +147,30 @@ nrow(testing)
 
 ```{r}
 # Insert your code here
-ggplot(training, aes(MonthlyCharges)) + geom_density(aes(group = Churn, colour = Churn, fill = Churn), alpha = 0.1) + xlab("Monthly charges")
+ggplot(training, aes(MonthlyCharges)) + geom_density(aes(group=Churn, colour=Churn, fill=Churn), alpha=0.1) +xlab("Monthly charges")
+
+ggplot(training, aes(tenure)) + geom_density(aes(group=Churn, colour=Churn, fill=Churn), alpha=0.1) + xlab("tenure")
 ```
 
-```{r}
-ggplot(training, aes(tenure)) + geom_density(aes(group = Churn, colour = Churn, fill = Churn), alpha = 0.1) + xlab("tenure")
-```
-
-People with more months with the company have less chances to leave
+Under ~40, most customers stay. Over ~70, most customer want to leave. In the range between those two, it is not so clear. This means that the company can focus on this range of values to tip the scales so that more customers might want to stay.
 
 ```{r}
 # Insert your code here
-table(training$Churn, training$Contract)
-```
 
-```{r}
 # Categorical vs categorical
-ggplot(training, aes(x = Churn, fill = Contract)) + geom_bar()
+ggplot(training, aes(x=Churn, fill=Contract)) + geom_bar()
+
 ```
 
-Of all the people that stay, more or all they are equally distributed in the three types of contracts. We can see that almost all of the people with two year contract stay.
+The main source of people who want to leave comes from those who have a month-to-month contract. That is, most people who leave, are those who can without a penalty. This shows that penalty is a powerful dissuasive. 
 
 There are some variables with high correlations; should skip them
 
 ```{r, include=F}
 training$TotalCharges = NULL
 testing$TotalCharges = NULL
-```
 
+```
 
 # The Benchmark
 
@@ -202,43 +181,48 @@ ctrl <- trainControl(method = "cv", number = 5,
                      classProbs = TRUE, 
                      verboseIter=T)
 
-# We have many predictors, hence use penalized logistic regression
+# We have many predictors, hence use penalized logistic regression (with elastic net, ridge+lasso)
 lrFit <- train(Churn ~ ., 
                method = "glmnet",
                tuneGrid = expand.grid(alpha = seq(0, 1, 0.1), lambda = seq(0, .1, 0.02)),
-               metric = "Kappa",
+               metric = "Kappa", # kappa is accuracy but incorporating the unbalance
                data = training,
                preProcess = c("center", "scale"),
                trControl = ctrl)
 print(lrFit)
-lrPred = predict(lrFit, testing) # P(y^ = yes)>0.5 (a client wants to leave if the probability of leaving is more than 50%)
+lrPred = predict(lrFit, testing)
 confusionMatrix(lrPred, testing$Churn)
 ```
 
 Accuracy around 80%, but not the best performance measure here. Why?
 
-The most dangerous mistake is when someone wants to leave and we predict it as staying, we think the costumer is happy but they end up leaving in a month (losing a costumer loses us a lot of money). The top right mistake is the one we want to minimize (yes = leave). We decrease this error, but as a payoff we increase the other error. Very bad decision mathematically, but in practice it is better.
-
 Kappa around 0.46, not bad but it should be improved
+
+
+The most dangerous mistake is predicting a client will not leave when they will. This is the mistake that should be reduced.
 
 What happens if we use another threshold in the Bayes's rule?
 
 ```{r}
-threshold = 0.3 # Now P(y^= yes)>0.3 (we are more consetvative)
+threshold = 0.3
 lrProb = predict(lrFit, testing, type="prob")
 lrPred = rep("No", nrow(testing))
 lrPred[which(lrProb[,2] > threshold)] = "Yes"
 confusionMatrix(factor(lrPred), testing$Churn)
 ```
 
-Note the trade-off between false negatives and false positives is much better, but also note accuracy and kappa have been worsened. Accuracy is now around 77% and Kappa around 0.48.
+Note the trade-off between false negatives and false positives is much better, but also note accuracy and kappa have been worsened
+
+
+
+
 
 ### The ROC curve
 
 ROC curve shows true positives vs false positives in relation with different thresholds:
 
-- y-axis = Sensitivity (TP)
-- x-axis = Specificity (1-FP)
+-   y-axis = Sensitivity (TP)
+-   x-axis = Specificity (1-FP)
 
 The ROC:
 
@@ -257,18 +241,18 @@ legend("bottomright", legend=c("lr", "bench"), col=c("red",  "green"), lwd=2)
 
 roc.lr$auc
 roc.bench$auc
+
 ```
 
-The best threshold is that with the highest sum sensitivity + specificity 
+The best threshold is that with the highest sum sensitivity + specificity
 
 AUC = Area Under the Curve: around 0.85, the larger the better. Maximum is 1
 
 Seems a threshold around 0.25 is reasonable for logistic regression
 
-- this is because classes are unbalanced
+-   this is because classes are unbalanced
 
-- this is the threshold with the best balance between sensitivity and specificity
-
+-   this is the threshold with the best balance between sensitivity and specificity
 
 ### Variable importance
 
@@ -278,8 +262,6 @@ For Bayes' classifiers or logistic regression, variable importance is based on e
 lr_imp <- varImp(lrFit, scale = F)
 plot(lr_imp, scales = list(y = list(cex = .95)))
 ```
-
-Tenure is very important for predicting.
 
 Insights?
 
@@ -293,9 +275,6 @@ In linear models, they are lines (hyper-planes), like $\beta_1\cdot x_1$
 library(pdp)
 
 partial(lrFit, pred.var = "tenure", which.class=2, plot = TRUE, prob=TRUE, rug = TRUE)
-```
-
-```{r}
 partial(lrFit, pred.var = "Contract",  which.class=2, plot = TRUE, prob=TRUE, rug = TRUE)
 ```
 
@@ -303,22 +282,22 @@ partial(lrFit, pred.var = "Contract",  which.class=2, plot = TRUE, prob=TRUE, ru
 
 Features increasing chances of leaving:
 
-- Tenure (especially < 12 Months)
-- Internet Service = Fiber Optic
-- Payment Method = Electronic Check
+-   Tenure (especially \< 12 Months)
+-   Internet Service = Fiber Optic
+-   Payment Method = Electronic Check
 
 Features decreasing chances of leaving:
 
-- Contract = two year
-- Total/monthly charges 
+-   Contract = two ear
+-   Total/monthly charges
 
 Accuracy is ok, around 80%. But are the two errors equally important?
 
-The company will be concerned with balancing: 
+The company will be concerned with balancing:
 
-- the cost of a customer who is leaving and has not been targeted, 
+-   the cost of a customer who is leaving and has not been targeted,
 
-- the cost of inadvertently targeting customers that are not planning to leave 
+-   the cost of inadvertently targeting customers that are not planning to leave
 
 Usually, the first cost (associated with false negatives) is the most dangerous for the company
 
@@ -326,22 +305,22 @@ Hence, how can we reduce that cost (at the expense of increasing the other cost)
 
 Assume the following (company's data):
 
-- Cost of true negatives is 0: the model is correctly identified a happy customer, no need to offer discounts
+-   Cost of true negatives is 0: the model is correctly identified a happy customer, no need to offer discounts
 
-- Cost of false negatives is 500 (customer value): most problematic error, we lose the customer 
+-   Cost of false negatives is 500 (customer value): most problematic error, we lose the customer
 
-- Cost of false positives is 100: retention incentive
+-   Cost of false positives is 100: retention incentive
 
-- Cost of true positives is 140: (1-gamma)\*(customer value) + gamma\*(retention incentive)
+-   Cost of true positives is 140: (1-gamma)\*(customer value) + gamma\*(retention incentive)
 
 where gamma=probability a custommer accepts the incentive/offer, 0.9 in our case
 
 Cost matrix:
 
-| Prediction/Reference |  no  |   yes  |
-| -------------------- | ----:| ------:|
-| predicted no         |   0  |   500  |
-| predicted yes        |  100 |   140  |
+| Prediction/Reference |  no | yes |
+|----------------------|----:|----:|
+| predicted no         |   0 | 500 |
+| predicted yes        | 100 | 140 |
 
 Unit cost is then:
 
@@ -353,12 +332,11 @@ Unit cost is then:
 cost.unit <- c(0, 100, 500, 140)
 ```
 
-### Cost of Naive classifier
+### Cost of Naïve classifier
 
 Unit cost for Naive classifier (no analytics knowledge)
 
-cost = 0\*.74 + 100\*0 + 500\*.26 +  + 140\*0
-      = 130eur/customer on average
+cost = 0\*.74 + 100\*0 + 500\*.26 + + 140\*0 = 130eur/customer on average
 
 Savings = (retention incentive - cost)
 
@@ -374,7 +352,7 @@ cost
 
 Savings per customer around 20 eur, i.e. 50 eur better than the naive
 
-## Cost-sensitive classifier (expert level) 
+## Cost-sensitive classifier (expert level)
 
 ```{r}
 cost.i = matrix(NA, nrow = 100, ncol = 10)
@@ -421,7 +399,7 @@ boxplot(cost.i, main = "Threshold selection",
 apply(cost.i, 2, median)
 ```
 
-Savings around 20eur/customer on average. Any of the three: 0.15, 0.2 and 0.25 is good because they are more or less the same, so any is okay. We take 0.2. If we don't have economic information we use the ROC, but if we have it we use this cost-sensitivity analysis.
+Savings around 20eur/customer on average
 
 Can you imagine the savings with just 100,000 customers?
 
@@ -440,7 +418,6 @@ cost = sum(as.vector(CM)*cost.unit)/sum(CM)
 cost
 ```
 
-
 # Risk learning
 
 There are customers who provide more income to the company than others
@@ -450,11 +427,11 @@ Hence, we should focus on them if their churn probability is high
 Money at risk:
 
 ```{r}
-Risk.customer.year=testing$MonthlyCharges*lrProb[,2]*12 #lrProb[,2] is the probability that they leave
+Risk.customer.year=testing$MonthlyCharges*lrProb[,2]*12
 hist(Risk.customer.year,col="lightblue")
 ```
 
-We should focus on customers with money.at.risk > 500 eur
+We should focus on customers with money.at.risk \> 500 eur
 
 ```{r}
 sum(Risk.customer.year>500)/length(Risk.customer.year)
@@ -475,28 +452,33 @@ We can then offer risky customers a discount or better service, etc.
 
 # Machine Learning tools
 
-
 ## Random Forest
 
-Using the randomForest library
+Using the `randomForest` library
 
 ```{r}
-rf.train <- randomForest(Churn ~., data=training,                      ntree=200,mtry=10,cutoff=c(0.75,0.25),importance=TRUE, do.trace=T)
+rf.train <- randomForest(Churn ~., data=training, ntree=200, mtry=10, cutoff=c(0.75,0.25), importance=TRUE, do.trace=T)
 
 # mtry: number of variables randomly sampled as candidates at each split
 # ntree: number of trees to grow
 # cutoff: cutoff probabilities in majority vote
 ```
 
+Although `caret` is easier and recommended, the original library `randomForest` allows for more custom modification. For example, in the original library, the parameter `cutoff`, which is not included in `caret`, indicates the threshold for the most voted category to be considered as such (which by default is c(0.5,0.5); the usual definition of the mode). In general, it is better to be more conservative.
 
-Prediction
+Writing the formula using ~. is not recommended, in statistics since it might include non-important variables that might lead to overfitting or collinearity. In Machine Learning, specifically in Random Forest, this is not a problem.
+
+
+Prediction:
 
 ```{r}
 rf.pred <- predict(rf.train, newdata=testing)
 confusionMatrix(rf.pred, testing$Churn)
 ```
 
-The accuracy is around 72%. Let's optimize now the hyper-parameters using Caret with a specific loss.
+The confusion matrix shows that there are many more cheap misclassifications than expensive ones. This is due to the `cutoff` parameter, which has been correctly balanced. Using the standard value of the parameter, the number of expensive mistakes greatly increases.
+
+Let's optimize now the hyper-parameters using Caret with a specific customized loss.
 
 Define first the specific function for the cost:
 
@@ -512,13 +494,14 @@ EconomicCost <- function(data, lev = NULL, model = NULL)
 }
 ```
 
+Instead of cost, profit can also be considered; `caret` has options for both.
+
 For example, this is the cost with the previous prediction
 
 ```{r}
 EconomicCost(data = data.frame(pred  = rf.pred, obs = testing$Churn))
-```
 
-The economic cost is 79.743777.
+```
 
 Now include this function in the Caret control:
 
@@ -528,7 +511,6 @@ ctrl <- trainControl(method = "cv", number = 5,
                      summaryFunction = EconomicCost,
                      verboseIter=T)
 ```
-
 
 Now train a RF using Caret with the specific metric:
 
@@ -545,6 +527,8 @@ rf.train <- train(Churn ~.,
                   trControl = ctrl)
 ```
 
+There are two sets of hyperparameters, `ntree` and `cutoff`, and `mtry` within the `tuneGrid` argument. Inside the `train` function, `caret` considers them different groups. In `caret` there are some parameters that cannot be optimized, only the ones that are accepted with the `tuneGrid` argument and which are established in the source code of `caret` by the authors. The other parameters have to be hard-coded when using the `train` function. Sometimes, such as in this case, some important hyperparameters are left out of the hyperparameter tuning by `caret`. The only to tune these is by hand. 
+
 Variable importance:
 
 ```{r}
@@ -552,12 +536,24 @@ rf_imp <- varImp(rf.train, scale = F)
 plot(rf_imp, scales = list(y = list(cex = .95)))
 ```
 
+The importance of these variables is different to those found with logistic regression. This is probably because the Random Forest model has found a non-linear relationship that logistic regression would never be able to obtain.
+
+We can visualize this relation using the following code, from the library `pdp`.
+
 ```{r}
+library(pdp)
 partial(rf.train, pred.var = "tenure", which.class=2, plot = TRUE, prob=TRUE, rug = TRUE)
 partial(rf.train, pred.var = "MonthlyCharges", which.class=2, plot = TRUE, prob=TRUE, rug = TRUE)
 ```
 
+Clearly the relationship between `tenure` and the response is non-linear. Logistic regression was able to find the importance of this variable by using a straight line that best approximated this relation. 
+
+The second most important variable is definitely non-linear as well, and in such a way that logistic regression could not approximate it well at all. 
+
+(Interpretation of the professor for the relation of the second most important variable): there is a horizontal line until around 60€, meaning that if the customer is paying less than 60€ all the customer are happy, and there is a fixed probability of leaving. After 60€, there seems to be a positive linear slope, meaning that the more expensive the plan is after 60€, the customer believes it to be too expensive and is more likely to leave.
+
 Prediction:
+Using the predict function, the default threshold is 0.5.
 
 ```{r}
 rfPred = predict(rf.train, newdata=testing)
@@ -578,16 +574,19 @@ cost = sum(as.vector(CM)*cost.unit)/sum(CM)
 cost
 ```
 
+Changing the threshold does decrease the cost, but only very slightly. 
+
 ## Gradient Boosting
 
-First using the gbm library
+First using the gbm library:
 
 ```{r}
 GBM.train <- gbm(ifelse(training$Churn=="No",0,1) ~., data=training, distribution= "bernoulli",n.trees=250,shrinkage = 0.01,interaction.depth=2,n.minobsinnode = 8)
 
 ```
 
-Prediction and cost
+
+Prediction and cost: 
 
 ```{r}
 threshold = 0.2
@@ -615,7 +614,13 @@ xgb_grid = expand.grid(
 )
 ```
 
-Then, train
+In the case of gradient boosting, the author considered that all the hyperparameters were important, and so the hyperparameter grid contains a considerable amount of parameters, although this grid in particular is very weak since there are not a lot of values to choose from.
+
+(Recommendation of the professor:) use 4 or 5 values for each hyperparameter, which can be extremely expensive computationally (up to 1 days of running code).
+
+Then, train:
+
+(Executing this code in the laptop using the original Gradient Boosting library might take up to 1 or 2 hours)
 
 ```{r}
 xgb.train = train(Churn ~ .,  data=training,
@@ -652,10 +657,17 @@ cost = sum(as.vector(CM)*cost.unit)/sum(CM)
 cost
 ```
 
-Better but we need to improve the grid: too expensive
+The cost has been reduced only by about 1-2€. Considering the difference in computation time, is it worth it? If there were one million customers, then this would mean a difference in one million euros (in one year)
+
+Better but we need to improve the grid: too expensive. 
+It is important to balance when to use gradient boosting and when not to. If we need quick but decent predictions, use Random Forest. In a company which might have more computational resources, gradient boosting will yield the best predictions by far.
 
 # Neural Networks
 
+First neural network in history (from the 50s). Most simple model. This idea was discarded because Random Forest and Gradient Boosting and SVMs led to much better results than a single layer perceptron, and so artificial intelligence was discarded. The reason behind the come back of artificial intelligence 10-20 years ago is due to the existence of masssive amounts of data (Big Data), the modern power in terms of computation, and some theoretical results behind neural networks.
+
+The `size` parameter represents the amount of nodes in the only hidden layer there is. 
+The `decay` parameter is the $\alpha$ value in the Gradient Descent method used to update the weights of the network, also known as learning rate.
 
 ```{r}
 
@@ -685,7 +697,15 @@ cost
 
 ```
 
+Even after using the 0.2 threshold, instead of the 0.5 default, the predictions made by the original single-layer neural network are not very good and the cost is a bit worse than the models seen earlier.
+
+The relationship between the response and the most important varaibles can also be visualised just as before.
+
 # Deep Neural Network
+
+This is now a multilayer perceptron composed of 3 layers, whose number of nodes will be tuned like any other hyperparameter by `caret`. For the second and third layers we check whether 0 nodes is better, that is, whether the layers are actually necessary.
+
+Both dropout parameters being equal to 0 means that this is a dense (fully-connected) network. To suppress, for example, a 10% of the connections in each iteration, dropout should be equal to 0.1. This is done to avoid overfitting.
 
 ```{r}
 dnn.train <- train(Churn ~., 
@@ -709,14 +729,19 @@ dnnPred[which(dnnProb[,2] > threshold)] = "Yes"
 CM = confusionMatrix(factor(dnnPred), testing$Churn)$table
 cost = sum(as.vector(CM)*cost.unit)/sum(CM)
 cost 
+
+
 ```
 
+This deep neural network is about as successful as random forest (or worse), and worse than gradient boosting. After all, we are considering tabular data, for which deep learning is not especially good, as opposed to images and text.
+
+REMEMBER: FOR EACH MODEL THE THRESHOLD HAS TO BE OPTIMIZED.
 
 # Other ideas
 
 ## More specific costs
 
-Instead of using a fixed cost matrix for all the customers, we could consider a different matrix for each, depending on the value of each customer for the company
+Instead of using a fixed cost matrix for all the customers, we could consider a different matrix for each, depending on the value of each customer for the company.
 
 ## Subsampling techniques
 
@@ -733,6 +758,8 @@ ctrl$sampling <- "up"
 #ctrl$sampling <- "rose"
 #ctrl$sampling <- "smote"
 ```
+
+This is done in cross-validation changing the definition of the control.
 
 Train any model with subsampling
 
@@ -787,5 +814,9 @@ CM = confusionMatrix(factor(ensemble.pred), testing$Churn)$table
 cost = sum(as.vector(CM)*cost.unit)/sum(CM)
 cost
 ```
- 
-Take care: ensemble models work better after adding more and better predictions... 
+
+From this ensemble predictions, Random Forest could be removed because the predictions are not particularly good and it is essentially a very similar method to gradient boosting.
+
+The combining of the results can be done more advancedly by using weighted averages. This yields only a slight improvement.
+
+Take care: ensemble models work better after adding more and better predictions...

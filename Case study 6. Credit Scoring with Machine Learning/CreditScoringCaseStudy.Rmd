@@ -388,7 +388,6 @@ profit.applicant*15000*10000
 
 # Machine-Learning tools
 
-## kNN
 
 Using first the original package
 
