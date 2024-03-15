@@ -1,0 +1,1948 @@
+---
+title: "Final project"
+author: "Lúa Arconada Manteca"
+date: "18/03/2024"
+output: html_document
+---
+
+```{r setup, include=FALSE, cache = TRUE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r libraries, cache = TRUE, include=FALSE}
+# Load the readr package for reading and importing data
+library(readr)
+
+# Load the dplyr package for data manipulation and transformation
+library(dplyr)
+
+# Load the tidyverse package, which includes dplyr and other packages for data manipulation, visualization, and analysis
+library(tidyverse)
+
+# Load the e1071 package for machine learning algorithms and functions
+library(e1071)
+
+# Load the caret package for machine learning tools and functions
+library(caret)
+
+# Load the class package for k-nearest neighbors classification
+library(class)
+
+# Load the pROC package for ROC curve analysis
+library(pROC)
+
+# Load the C50 package for decision tree modeling
+library(C50)
+
+# Load the pdp package for partial dependence plots
+library(pdp)
+
+# Load the xgboost package for extreme gradient boosting
+library(xgboost)
+
+# Load the deepnet package for deep learning models
+library(deepnet)
+```
+
+First of all, we set a seed for reproducibility of the results.
+
+```{r seed, cache = TRUE}
+# Set the seed for random number generation to ensure reproducibility of results
+set.seed(42)
+```
+
+## Preprocessing and EDA
+
+### Goal
+
+We are astronomy researchers in a private company that works by founding and we are in charge of categorizing observed space objects as either stars, galaxies or quasar objects (QSO). We have a dataset that provides us with 100000 observations of space taken by the SDSS (Sloan Digital Sky Survey). Our classification task is very important because we are later going to analyse the objects and depending on what they are, we are going to receive more or less money for its study (more for quasar objects). Hence, we are going to focus on the variable `calls` that tells us the object class out of the three mentioned possible ones.
+
+We are in charge of creating a report with the number of each of this objects to submit at the end of the month in order to receive the corresponding funding the following month, that is why we are interested in predicting the class of these objects to be able to ask for the amount of money we need and not end up with more or less of what we need, because if we end with less we can't carry out every test we need to study the object, and if we receive more we will have a penalty on next month funding.
+
+As we said, the data consists of 100000 observations of space objects taken by the SDSS (Sloan Digital Sky Survey). Every observation is described by 17 feature columns and 1 class column which identifies it to be either a star, galaxy or quasar (our target variable).
+
+In summary, we are going to use the variables in our dataset to predict the variable `class`, which we are going to transform into a binary variable with levels 'QSO' and 'NOT.QSO'. We are going to use the machine learning methods seen in class (k-nearest neighbours, support vector machines, decision trees, random forest, gradient boosting neural networks and deep neural networks).
+
+### Load the datasets (review)
+
+First of all, we load our dataset.
+
+```{r data, cache = TRUE}
+data_whole <- read.csv("star_classification.csv")
+head(data_whole)
+```
+
+We can see that we have the following 18 variables:
+
+-   `obj_ID`: Object Identifier, the unique value that identifies the object in the image catalog used by the CAS.
+-   `alpha`: Right Ascension angle (at J2000 epoch).
+-   `delta`: Declination angle (at J2000 epoch).
+-   `u`: Ultraviolet filter in the photometric system.
+-   `g`: Green filter in the photometric system.
+-   `r`: Red filter in the photometric system.
+-   `i`: Near Infrared filter in the photometric system.
+-   `z`: Infrared filter in the photometric system.
+-   `run_ID`: Run Number used to identify the specific scan.
+-   `rereun_ID`: Rerun Number to specify how the image was processed.
+-   `cam_col`: Camera column to identify the scanline within the run.
+-   `field_ID`: Field number to identify each field.
+-   `spec_obj_ID`: Unique ID used for optical spectroscopic objects (this means that 2 different observations with the same spec_obj_ID must share the output class).
+-   `class`: Object class (galaxy, star or quasar object).
+-   `redshift`: Redshift value based on the increase in wavelength.
+-   `plate`: Plate ID, identifies each plate in SDSS.
+-   `MJD`: Modified Julian Date, used to indicate when a given piece of SDSS data was taken.
+-   `fiber_ID`: Fiber ID that identifies the fiber that pointed the light at the focal plane in each observation.
+
+We have 14 numerical variables (`obj_ID`, `alpha`, `delta`, `u`, `g`, `r`, `i`, `z`, `run_ID`, `rerun_ID`, `redshift`, `field_ID`, `spec_obj_ID` and `fiber_ID`), 3 integer variables (`cam_col`, `plate` and `MJD`) and one multicategorical, our target variable `class`.
+
+### Eliminate unnecesary variables and various modifications
+
+First of all, we are going to eliminate the variable `obj_ID` because it is an individual identification number that does not provide any information. We are also going to eliminate the `rerun_ID` variable because it is constant with value 301 in all the observations.
+
+In addition, we are going to make the `run_ID` variable multicategorical by creating categories for the numbers every 1000. In other words, the observations with values in this variable between 0 and 1000 are all part of the '0-1000' category, the ones with value between 1001 and 2000 are in the category 1000-2000, and so on. Afterwards, we are going to set all the categorical variables (`class`, `run_ID` and `cam_col`) as factors.
+
+```{r variables, cache = TRUE}
+# Eliminate the specified variables from the dataset
+data = data_whole[,-c(1, 10)]
+
+# Make multicategorical variables
+# Define the breaks for categorization
+breaks <- seq(0, 9000, by = 1000)
+
+# Create a new categorical variable based on 'run_ID'
+data$run_ID <- cut(data$run_ID, breaks = breaks, labels = paste(breaks[-length(breaks)], "-", breaks[-1]))
+
+# Convert categorical variables to factor type
+data[, c('class', 'run_ID', 'cam_col')] <- lapply(data[, c('class', 'run_ID', 'cam_col')], function(x) as.factor(x))
+
+# Display the structure and first few rows of the preprocessed dataset
+head(data)
+```
+
+### Prepare the target variable
+
+As we mentioned, we are going to make our target variable binary by combining the 'Star' and 'Galaxy' categories into a level called 'NOT.QSO'.
+
+```{r predicted, cache = TRUE}
+# Recode the levels of the class variable
+data$class <- factor(data$class, levels = c("STAR", "GALAXY", "QSO"))
+
+# Create a new binary variable with custom labels
+data$class <- factor(ifelse(data$class %in% c("STAR", "GALAXY"), "NOT.QSO", "QSO"), levels = c("NOT.QSO", "QSO"))
+```
+
+### Missing values
+
+Now we wanna study the variables and to do that we compute a summary to see some details like the mean, median, minimum, maximum, missing values (NA's),...
+
+```{r summary data, cache = TRUE}
+# Summarize the data frame
+summary(data)
+```
+
+We see that in the variables `u`, `g` and `z` something is up because the minimum is -9999, which can not be. If we look at the dataset we can see that the observations with those values in those variables are the same one, so we are going to eliminate said observation.
+
+```{r baddata, cache = TRUE}
+which(data$u == -9999)
+which(data$g == -9999)
+which(data$z == -9999)
+```
+
+As we said, we can see that it is the same observation (observation 2045), so we eliminate it from our dataset.
+
+```{r elimbaddata, cache = TRUE}
+data = data[-2045, ]
+```
+
+Now, we compute the summary again and we see that nothing of the sorts happens in any other variable and that it still does not happen in the ones mentioned.
+
+```{r summary2, cache = TRUE}
+summary(data)
+```
+
+We are interested in dealing with the missing values and getting rid of them in the best way we can. We compute the percentage of observations with missing values in each variable.
+
+```{r percentage nas, cache = TRUE}
+# Compute the percentage of missing values for each variable
+sapply(data, function(x) mean(is.na(x)) * 100)
+```
+
+We can see that we have missing values in the variables `delta`, `g`, `r` and `MJD`. However, we do not eliminate these variables, instead what we do is compute the missing values. We decide not to eliminate them because the percentage of missing values is very low in each variable: `delta` has 9.35%, `g` has 7.47%, `r` has 9.32% and `MJD` has 7.61%.
+
+The missing values are all in numeric variables, so we want to see the distributions of the data and if they have outliers, so we compute the histograms (to see skewness and symmetry) and boxplots (to see outliers) of each variable. If the variable is normally distributed or approximately symmetric without extreme outliers we exchange the NA's with the mean of the variable. However, if it is heavily skewed or with outliers, we substitute it with the median.
+
+```{r histograms, cache = TRUE}
+# Take only the variables with missing values
+missing_vars = c("delta", "g", "r", "MJD")
+
+# Create histograms for symmetry and skewness of each variable
+for(var in missing_vars) {
+  # Plot histogram for the current variable
+  hist(data[[var]], 
+       main = paste("Histogram of", var),    # Title of the plot
+       xlab = var,                           # Label for x-axis
+       ylab = "Frequency",                   # Label for y-axis
+       col = "skyblue",                      # Fill color of bars
+       border = "black"                      # Border color of bars
+  )
+}
+```
+
+We also compute the skewness.
+
+```{r skewness, cache = TRUE}
+selected_data <- data_whole[, missing_vars]
+apply(selected_data, 2, skewness, na.rm = TRUE)
+```
+
+Such strong skewness on the variable `g` suggest the presence of many extreme outliers. And now the boxplots to check for outliers. We compute the ones corresponding to the variables `delta`, a`g` and `r` separate from the one corresponding to `MJD` because of the scaling and, hence, to visualize it better.
+
+```{r boxplots, cache = TRUE}
+# Extract the columns with missing values from the dataset
+missing = setdiff(missing_vars, 'MJD')
+  
+missing = data[,missing]
+
+# Create boxplots to identify outliers in each variable
+boxplot(missing,                       # Data for boxplot
+        outline = TRUE,                # Show outliers
+        col = 'skyblue',               # Fill color of boxes
+        border = 'black'               # Border color of boxes
+)
+```
+
+```{r boxplot2, cache = TRUE}
+# Create boxplot to identify outliers in MJD
+boxplot(data[, 'MJD' ],                       # Data for boxplot
+        outline = TRUE,                # Show outliers
+        col = 'skyblue',               # Fill color of boxes
+        border = 'black',               # Border color of boxes
+        xlab = 'MJD'
+)
+```
+
+We can see, following the criteria we said before, that we have to use the mean in the variable `delta`, and the median in the variables `g`, `r` and `MJD`.
+
+```{r nas compute, cache = TRUE}
+# Replace missing values with mean for delta
+data$delta = replace_na(data$delta, median(data$delta, na.rm=TRUE))
+
+# Replace missing values with median for g
+data$g = replace_na(data$g, median(data$g, na.rm=TRUE))
+
+# Replace missing values with median for r
+data$r = replace_na(data$r, median(data$r, na.rm=TRUE))
+
+# Replace missing values with median for MJD
+data$MJD = replace_na(data$MJD, median(data$MJD, na.rm=TRUE))
+```
+
+We check that there are no remaining missing values with the following function.
+
+```{r check nas left, cache = TRUE}
+# Function to check for missing values
+check_missing_values <- function(data) {
+  if (any(is.na(data))) {          # Check if any missing values exist
+    message("There are missing values left.")  # Print a message if missing values are found
+  } else {
+    message("There are no missing values left.")  # Print a message if no missing values are found
+  }
+}
+
+# Call the function with our dataset
+check_missing_values(data)  # Check missing values in data dataset
+```
+
+### Observe the target variable:
+
+We can see in the following code that the classes are not well balanced, they are, in fact, extremely unbalanced (80.82% NOT.QSO and 19.18% QSO).
+
+```{r table class, cache = TRUE}
+# Display the frequency table of the 'temp' variable
+table(data$class)
+```
+
+### Train/test data split
+
+After creating classifiers and training them, we will want to see how well they perform, how accurate they are. To do this, we need to do a train/test partition. We do this so we can use the train partition to fit the model and the test partition to measure its performance. We make a partition with 40% on the training and 60% on the testing because of the high volume of observations we have.
+
+The train/test partition helps to prevent overfitting, which occurs when a model learns the training data too well and performs poorly on new data. By evaluating the model on a separate testing set, you can get a more accurate estimate of its performance on unseen data.
+
+```{r train/test split, cache = TRUE}
+# Shuffle the rows of the dataset
+shuffled_data <- data[sample(nrow(data)), ]
+
+# Create a train/test partition with the shuffled data
+train_index <- createDataPartition(
+  y = shuffled_data$class,  # Specify the response variable for stratified sampling
+  p = 0.4,                 # Proportion of data for the training set, 40%
+  list = FALSE             # Return indices as a vector, not as a list
+)
+
+# Create the training and testing datasets
+train_data <- shuffled_data[train_index, ]  # Subset of shuffled_data for training
+test_data <- shuffled_data[-train_index, ]  # Subset of shuffled_data for testing
+```
+
+### Exploratory Data Analysis
+
+Exploratory Data Analysis (EDA) is an approach to analyzing datasets in order to summarize their main characteristics, often using visual methods. Now that we have done the partition, we are going to carry this kind of analysis on the train dataset.
+
+#### Univariate analysis
+
+Here we observe the distributions of the numerical variables via a histogram of frequency for each variable to see their distributions and have an idea about them. We separate it by their values on the variable `class`.
+
+```{r histograms numerical, cache = TRUE}
+# Define numeric variables
+numeric_vars <- c('alpha', 'delta', 'u', 'g', 'r', 'i', 'z', 'field_ID', 'spec_obj_ID', 'redshift', 'plate', 'MJD', 'fiber_ID')
+
+# Create histograms for each numeric variable
+for (var in numeric_vars) {
+  # Create a ggplot object
+  hist_plot <- ggplot(train_data, aes(x = !!sym(var), fill = class)) +
+    geom_histogram(bins = 30, alpha = 0.5, position = "identity") +
+    labs(title = paste("Histogram of", var),
+         x = var,
+         y = "Frequency") +
+    scale_fill_manual(values = c("skyblue", "salmon"))  # Define colors for classes
+  
+  # Print the histogram
+  print(hist_plot)
+}
+```
+
+We can see that in the variable `u`, non quasar objects take more extreme values than quasar objects. If an object has an observation in this variable that is less than 17 or more than 27, then it is a non quasar object. Moreover, in the variable `delta` we can see that both classes take the same range of values, they differ in frequency but because of the unbalance in the number of observations. In the variable `i`, we can also see that those observations with values lower than 17 are non quasar objects and with more than 17 can be both.
+
+Now, we are going to study the other variables, the categorical ones. We see how the observations in our categorical variables are distributed via barplots for each variable.
+
+```{r barplots categorical, cache = TRUE}
+# Define categorical variables
+categorical_vars <- c('run_ID', 'cam_col', 'class')
+
+# Create bar plots for each categorical variable in the training dataset
+for(var in categorical_vars) {
+  # Compute frequency table for the current categorical variable
+  freq_table <- table(train_data[[var]])
+  
+  # Create a bar plot
+  barplot(freq_table,                  # Data for bar plot
+           main = paste("Bar plot of", var),  # Title of the bar plot
+           xlab = var,                  # Label for x-axis
+           ylab = "Frequency",          # Label for y-axis
+           col = "skyblue",             # Fill color of bars
+           border = "black"             # Border color of bars
+  )
+}
+```
+
+In the barplot of our target variable `class`, we can once again see the unbalance of our two categories. If we observe a new object and make a prediction based on this barplot, we would classify all of them as 'NOT.QSO'. This is what a naive classifier does, classify on the more numerous class.
+
+#### Bivariate analysis
+
+We are going to explore some of the combinations of variables by pairs of numeric variables to see the relationship between them, but also their relationship with the target variable. I think it is important to see these plots, so we can see that we can observe other things not involving our target variable. For example, `delta` and `redshift``.
+
+```{r scatterplot delta/redshift, cache = TRUE}
+# Scatter plot using ggplot2
+ggplot(train_data, aes(x = delta, y = redshift, color = class)) +  # Specify the data and aesthetics
+  geom_point(alpha = 0.5) +           # Add points with transparency and color
+  labs(title = "Scatter plot of delta vs. redshift",  # Set the title and axis labels
+       x = "Delta", 
+       y = "Redshift") + 
+  theme(plot.title = element_text(hjust = 0.5))           # Adjust the title position
+```
+
+we can see that, it does not follow any pattern. It does not look like there is any correlation between the two variables. All values of `delta` take all values of `redshift`. However, what we can observe is that the non quasar objects take lower values in the `redshift` variable, the higher values are only taken by the quasar objects.
+
+If we think about it, two variables that seem reasonable that will be correlated are `r` and `g`, because both are related to colour filters in the photometric system. We expect to observe a pattern in the plot.
+
+```{r scatterplot r/g, cache = TRUE}
+# Scatter plot using ggplot2
+ggplot(train_data, aes(x = r, y = g, color = class)) +  # Specify the data and aesthetics
+  geom_point(alpha = 0.5) +           # Add points with transparency and color
+  labs(title = "Scatter plot of r vs. g",  # Set the title and axis labels
+       x = "r", 
+       y = "g") + 
+  theme(plot.title = element_text(hjust = 0.5))           # Adjust the title position
+```
+
+We, in fact, do observe a pattern that indicates high correlation. However, we have some observations that do not follow the pattern, which show that while we have high correlation, we do not have extremely high correlation. We will see it in the correlation matrix we will later compute with the corresponding value being high, but not extremely close to 1. Here, we can not draw any conclusion related to our target variable because the distribution is similar.
+
+Another pair of variables that seems reasonable to think that will have this high correlation are `u` and `g` because of the same reason, both are related to the colour filter in the photometric system.
+
+```{r scatterplot r/i, cache = TRUE}
+# Scatter plot using ggplot2
+ggplot(train_data, aes(x = r, y = i, color = class)) +  # Specify the data and aesthetics
+  geom_point(alpha = 0.5) +           # Add points with transparency and color
+  labs(title = "Scatter plot of r vs. i",  # Set the title and axis labels
+       x = "r", 
+       y = "i") + 
+  theme(plot.title = element_text(hjust = 0.5))           # Adjust the title position
+```
+
+We observe the pattern we expected, one that supports our idea of the variables being highly correlated, but not perfectly. Once again, we can not draw any conclusion on our target variable from this plot.
+
+Another pair of variables that seems interesting to plot are `alpha` and `delta`and we will in fact observe some clusters, but we will not be able to draw any conclusion on our target variable.
+
+```{r scatterplot alpha/delta, cache = TRUE}
+# Scatter plot using ggplot2
+ggplot(train_data, aes(x = alpha, y = delta, color = class)) +  # Specify the data and aesthetics
+  geom_point(alpha = 0.5) +       # Add points with transparency and color
+  labs(title = "Scatter plot of alpha vs. delta",  # Set the title and axis labels
+       x = "Alpha", 
+       y = "Delta") + 
+  theme(plot.title = element_text(hjust = 0.5))       # Adjust the title position
+```
+
+We are now going to use boxplots to observe other pairs of variables where at least one will be our target variable (we use boxplots because `class` is categorical and they are more informative with these variables). For example, it may be interesting to see the relation between `class` and `redshift`.
+
+```{r boxplot class/redshift, cache = TRUE}
+# Boxplot using ggplot2
+ggplot(train_data, aes(x = class, y = redshift)) +  # Specify the data and aesthetics
+  geom_boxplot(fill = "skyblue", color = "black") +   # Add boxplots with fill and border color
+  labs(title = "Box plot of redshift by class",  # Set the title and axis labels
+       x = "Class", 
+       y = "Redshift") + 
+  theme(plot.title = element_text(face = "bold", hjust = 0.5))  # Adjust the title font and position
+```
+
+Here, we can clearly see that the bigger values (more than 1) of redshift correspond to observations of quasar objects (as we saw in the first scatterplot). Let's see if we can observe something similar with other variables and our target variable. For example, `class` with `i`.
+
+```{r boxplot class/alpha, cache = TRUE}
+# Boxplot using ggplot2
+ggplot(train_data, aes(x = class, y = i)) +      # Specify the data and aesthetics
+  geom_boxplot(fill = "skyblue", color = "black") + # Add boxplots with fill and border color
+  labs(title = "Box plot of i by class",  # Set the title and axis labels
+       x = "Class", 
+       y = "i") + 
+  theme(plot.title = element_text(face = "bold", hjust = 0.5))  # Adjust the title font and position
+```
+
+Here, we can see that values of `i` bigger than 20 correspond to QSO and lower values correspond to NOT.QSO. This is something that we were not able to see in the scatterplot.
+
+As a final bivariate analysis, we are going to compute the correlation matrix, but only of the numeric variables. Here, we will be able to check if our conclusion drawn from plots are true or not about the correlation of the observed matrices.
+
+```{r correlation_matrix, cache = TRUE}
+# Compute the correlation matrix for numeric variables in the training dataset
+correlation_matrix <- cor(train_data[, numeric_vars])
+correlation_matrix
+```
+
+Here, we can corroborate what we showed before: `r` and `g` are highly correlated (0.84), as well as `r` and `i` (0.92); while `delta` and `redshift` are not (0.006), as well as `alpha` and `beta` (0.17). 
+
+#### Multivariate analysis
+
+Now, we are going to compute a heat map of the previously computed correlation matrix.
+
+```{r heatmap, cache = TRUE}
+# Convert correlation matrix to a matrix
+cor_matrix <- as.matrix(correlation_matrix)
+
+# Create the correlation heatmap
+heatmap(cor_matrix, 
+        Rowv = NA,         # Do not reorder rows
+        Colv = NA,         # Do not reorder columns
+        col = colorRampPalette(c("blue", "white", "red"))(100),  # Define color scheme
+        scale = "none",    # Do not scale rows or columns
+        main = "Correlation heatmap of numeric variables"        # Set the title of the plot
+)
+
+# Add color legend
+legend("bottomright", 
+       legend = c("Low", "Medium", "High"),                     # Legend labels
+       fill = colorRampPalette(c("blue", "white", "red"))(3),   # Colors corresponding to legend labels
+       title = "Correlation",                                   # Title of the legend
+       bg = "transparent"                                       # Transparent background
+)
+```
+
+We can observe once again that `r` and `g` are highly correlated, as well as `r` and `i`, but `delta` and `redshift` are not and neither `alpha` and `beta`. On top of that, we can see how correlated are each and every pair of variables. As the legend says, the redder the square, the more correlated they are and the bluest, the lowest correlation.
+
+## Machine Learning classifiers
+
+### The Benchmark 
+
+A benchmark model serves as a baseline for comparison when developing or evaluating more complex models. It's typically a simple, easy-to-understand model that provides a reference point for assessing the performance of more sophisticated algorithms.
+
+The purpose of a benchmark model is to establish a minimum level of performance that any new model must surpass to be considered useful. It helps in gauging whether the additional complexity of a more advanced model is justified by a significant improvement in performance. Additionally, benchmark models are useful for understanding the difficulty of the task and for providing a point of comparison across different approaches or datasets.
+
+Since we have many predictors, we saw in class that a good benchmark will be penalized logistic regression. Penalized logistic regression is a modification of logistic regression that incorporates regularization techniques to prevent overfitting and improve generalization performance. It introduces penalty terms to the loss function, discouraging large coefficient values.  It addresses issues such as multicollinearity, overfitting, and high dimensionality.
+
+Firstly, we need the control function which implements cross-validation with 5 folds.
+
+```{r ctrl, cache = TRUE}
+ctrllog <- trainControl(method = "cv", number = 5,
+                     classProbs = TRUE, 
+                     verboseIter=T)
+```
+
+Now, we can fit our model using the caret package and incorporating our control function. Moreover, we take Kappa as our accuracy metric.
+
+```{r lrmodel, cache = TRUE}
+# Train the logistic regression model using penalized logistic regression (glmnet)
+lrFit <- train(class ~ .,                     # Predict class based on all predictors
+               method = "glmnet",             # Use glmnet method for logistic regression
+               tuneGrid = expand.grid(alpha = seq(0, 1, 0.1), lambda = seq(0, .1, 0.02)),  # Hyperparameter grid for alpha and lambda
+               metric = "Kappa",             # Use Kappa as the evaluation metric
+               data = train_data,            # Training data
+               preProcess = c("center", "scale"),  # Preprocess data by centering and scaling
+               trControl = ctrllog)          # Use defined control object for cross-validation
+print(lrFit)                                # Print the trained logistic regression model
+
+# Predict using the trained logistic regression model on test data
+lrPred = predict(lrFit, test_data)
+
+# Generate confusion matrix for the predictions
+cm = confusionMatrix(lrPred, test_data$class)
+
+# Print confusion matrix
+cm
+
+# Extract Kappa value from the confusion matrix
+kappa_value <- cm$overall["Kappa"]
+
+# Extract Accuracy value from the confusion matrix
+accuracy_value = cm$overall["Accuracy"]
+```
+
+We have a Kappa value of `r kappa_value` and an accuracy of `r accuracy_value`, but it is not the best performance metric because not all the errors have the same impact. It is worst to classify a quasar object as non quasar than viceversa, because we will not get enough money. We are going to use a more conservative threshold chosen manually.
+
+```{r lmpred, cache = TRUE}
+threshold = 0.3
+lrProb = predict(lrFit, test_data, type="prob")
+lrPred = rep("NOT.QSO", nrow(test_data))
+lrPred[which(lrProb[,2] > threshold)] = "QSO"
+cm = confusionMatrix(factor(lrPred), test_data$class)
+cm
+accuracy = cm$overall["Accuracy"]
+```
+
+We have worst accuracy `r `accuracy`, but we can see the tradeoff we want between the most impactful error (decreased, as we wanted) and the other (increased as a payoff).
+
+We are going to use the ROC to compute the optimal threshold for this model, because we do not know if the one we tried is the best one. 
+
+```{r lmroc, cache = TRUE}
+roc.lr=roc(test_data$class ~ lrProb[,2])
+
+plot(roc.lr, col="red",print.thres=TRUE)
+legend("bottomright", legend=c("lr"), col=c("red"), lwd=2)
+
+auc = roc.lr$auc
+auc
+optimal <- as.numeric(coords(roc.lr, "best", ret = "threshold"))
+```
+
+We can see that the best threshold for our benchmark model is `r optimal` (close to the one we chose, but not the same) and it is a really good model because the AUC is incredibly high, `r auc`. Hence, we predict using this threshold.
+
+```{r lrfin, cache = TRUE}
+threshold = optimal
+lrProb = predict(lrFit, test_data, type="prob")
+lrPred = rep("NOT.QSO", nrow(test_data))
+lrPred[which(lrProb[,2] > threshold)] = "QSO"
+cm = confusionMatrix(factor(lrPred), test_data$class)
+cm
+accuracy = cm$overall["Accuracy"]
+```
+
+#### Variable importance
+
+For Bayes' classifiers or logistic regression, variable importance is based on estimated coefficients. Variable importance refers to the measure of the contribution of each predictor variable in a predictive model towards explaining the variability or making accurate predictions. It helps identify which variables have the most significant impact on the model's performance.
+
+Understanding variable importance helps in feature selection, model interpretation, and identifying which variables have the most influence on the target variable. It can guide data preprocessing efforts and provide insights into the underlying relationships between predictors and the target variable.
+
+```{r lrvar, cache = TRUE}
+lr_imp <- varImp(lrFit, scale = F)
+plot(lr_imp, scales = list(y = list(cex = .95)))
+```
+
+`redshift` is very important for predicting, the most important variable.
+
+#### Partial dependence plots
+
+Partial dependence plots are a visualization technique used to understand the relationship between one predictor variable and the target variable in a predictive model. They show how the average prediction of the model changes as the value of one or more predictors varies while keeping all other predictors at fixed values.
+
+These are the marginal effects of one variable after discounting for other variables
+
+```{r lrpart, cache = TRUE}
+partial(lrFit, pred.var = "redshift", which.class=2, plot = TRUE, prob=TRUE, rug = TRUE)
+```
+
+We can see what we saw in the EDA, the higher the value, the bigger the probability of being a quasar object. Moreover, when the value in the `redshift` variable is higher than 2, the object is always classified as quasar.
+
+#### Cost-sensitive Analysis
+
+However, our goal is not only to obtain the best predictive model, but to optimize the economic profit. We do not want to end up with less money than we need. We take a look at the two possible errors:
+
+- Classify a quasar object as 'NOT QSO'.
+- Classify a galaxy or star as 'QSO'.
+
+We realize that for us, both errors do not have the same impact. The first one is more costly because we will not receive all the money that we need for our research (investigating a quasar object is more expensive in our scenario) and we will not be able to do it fully. We have the following table of profits:
+
+| Prediction/Reference | NOT WSO |  QSO |
+| -------------------- | -------:|-----:|
+| NOT QSO              |  0.25   | -1.0 |
+| QSO                  | -0.10   | 0.25 |
+
+We need to set the profit table as a vector:
+
+```{r prpfit, cache = TRUE}
+profit.unit <- c(0.25, -0.10, -1.0, 0.25)
+```
+
+A naive classifier would classify all the objects as non quasar because it is the most prevalent class (80.82%), so the profit would be:
+
+profit = 0.25\*0.81 - 1\*0.19 - 0.1\*0 + 0.25\*0 = 0.2025 - 0.19 = 0.0125 per object.
+
+This profit is what we want to improve by obtaining the best threshold for our model and by taking into account the economic impact.
+
+```{r lrloop, cache = TRUE}
+profit.i = matrix(NA, nrow = 25, ncol = 10)
+# 20 replicates for training/testing sets for each of the 10 values of threshold
+
+grid = data.frame(alpha = lrFit$bestTune$alpha, lambda = lrFit$bestTune$lambda)
+
+seq_values <- seq(0.05, 0.45, 0.05)
+
+# Append 0.22 to the sequence
+seq_values <- c(seq_values, 0.246)
+
+j <- 0
+for (threshold in seq_values){
+  
+  j <- j + 1
+  #cat(j)
+  for(i in 1:25){
+    
+    # partition data intro training (75%) and testing sets (25%)
+    d <- createDataPartition(train_data$class, p = 0.4, list = FALSE)
+    # select training sample
+    
+    train <- train_data[d,]
+    test  <- train_data[-d,]  
+    
+    lrFit <- train(class ~ ., data=train, method = "glmnet",
+                   tuneGrid = grid, preProcess = c("center", "scale"),
+                   trControl = trainControl(method = "none", classProbs = TRUE))
+    
+    lrProb = predict(lrFit, test, type="prob")
+    lrPred = rep("NOT.QSO", nrow(test))
+    lrPred[which(lrProb[,2] > threshold)] = "QSO"
+    
+    CM = confusionMatrix(factor(lrPred), test$class)$table
+    profit = sum(as.vector(CM)*profit.unit)/sum(CM)
+    profit
+    
+    profit.i[i,j] <- profit
+    
+  }
+}
+
+# Threshold optimization:
+boxplot(profit.i, main = "Threshold selection",
+        ylab = "Economic profit",
+        xlab = "threshold value",
+        names = seq(0.05,0.5,0.05),col="royalblue2",las=2)
+
+# values around 0.2 are reasonable
+medians = apply(profit.i, 2, median)
+medians
+```
+
+We observe that the thresholds around 0.25 are good, so we obtain the best one and compute our final prediction with this model and obtain its economic profit.
+
+```{r lropt, cache = TRUE}
+indexthr = which.max(medians)
+threshold = seq(0.05,0.5,0.05)[indexthr]
+lrFit <- train(class ~ ., data=train_data, method = "glmnet",
+               tuneGrid = data.frame(alpha = 0.7, lambda = 0), preProcess = c("center", "scale"),
+               trControl = trainControl(method = "none", classProbs = TRUE))
+lrProb = predict(lrFit, test_data, type="prob")
+lrPred = rep("NOT.QSO", nrow(test_data))
+lrPred[which(lrProb[,2] > threshold)] = "QSO"
+CM = confusionMatrix(factor(lrPred), test_data$class)$table
+profit = sum(as.vector(CM)*profit.unit)/sum(CM)
+profit
+```
+
+We can see that we have improved the model immensely, our economic profit is now `r profit`. However, this is just our benchmark model, the best one yet, but the benchmark nevertheless. We are going to use the machine learning tools we saw in class to try to improve it.
+
+optimal <- as.numeric(coords(roc.lr, "best", ret = "threshold"))
+### K-Nearest Neighbours (KNN)
+
+K-Nearest Neighbors (KNN) is a simple and intuitive supervised learning algorithm used for classification and regression tasks. It's a non-parametric method, meaning it doesn't make any assumptions about the underlying data distribution. Instead, it makes predictions based on the similarity of new data points to existing data points.
+
+KNN's simplicity and effectiveness make it a popular choice for various machine learning tasks, especially when the dataset is small or the relationships between features and the target variable are non-linear. However, its main drawback is its computational inefficiency, particularly with large datasets, as it requires computing distances between the new data point and all training data points during prediction. Additionally, KNN's performance can degrade if the feature space has irrelevant or noisy features, or if the data is imbalanced.
+
+As we saw in class, using the package `caret` is the best choice, so we decide to compute all the models using this package. We are going to define a function that will work as our metric in our caret models, it takes into account the economic nature of our problem.
+
+```{r economicprofit, cache = TRUE}
+# We have to add lev = NULL and model = NULL to make caret work 
+EconomicProfit <- function(data, lev = NULL, model = NULL) 
+{
+  y.pred = data$pred 
+  y.true = data$obs
+  CM = confusionMatrix(y.pred, y.true)$table
+  out = sum(profit.unit*CM)/sum(CM) # The profit expression
+  names(out) <- c("EconomicProfit")
+  out # Important to use this name so caret think it is like accuracy
+}
+```
+
+We also need the control function, which performs cross-validation with 5 folds.
+
+```{r goodctrl, cache = TRUE}
+ctrl <- trainControl(method = "cv", number = 5,
+                     classProbs = TRUE, 
+                     summaryFunction = EconomicProfit,
+                     verbose=F)
+```
+
+Now, we have to train our model.
+
+```{r trainknn, cache = TRUE}
+train_data$class <- factor(train_data$class, labels = make.names(levels(train_data$class)))
+
+knnFit <- train(class ~ ., 
+                method = "knn", 
+                data = train_data,
+                preProcess = c("center", "scale"),
+                tuneLength = 7,
+                metric = "EconomicProfit",
+                trControl = ctrl)
+print(knnFit)
+best_hyperparameters <- knnFit$bestTune
+profit <-  knnFit$results[knnFit$results$k == best_hyperparameters$k, "EconomicProfit"]
+```
+
+We see that of the 7 studied k parameters (5, 7, 9, 11, 13, 15 and 17) the one that maximizes the profit is k = `r best_hyperparameters$k`, which is chosen by being the one with the highest economic profit (`r profit`).
+
+After training the model, we need to obtain its predictions.
+
+```{r knnpred, cache = TRUE}
+knnPred = predict(knnFit, test_data)
+
+cm = confusionMatrix(knnPred,test_data$class)
+cm
+accuracy = cm$overall["Accuracy"]
+
+profit = EconomicProfit(data = data.frame(pred  = knnPred, obs = test_data$class))
+profit
+```
+
+We obtain a pretty good model, with accuracy `r accuracy` and economic profit `r profit`. We saw that another way of using knn is making it obtain the predictions based on the probabilities computed using the proportion of votes in the neighbours.
+
+```{r knnsprob, cache = TRUE}
+knnProb = predict(knnFit, test_data, type="prob") #prob to get the probabilities instead of the class predictions
+head(knnProb) #We get the good and the bad probability (we only need one)
+```
+
+We want to check if the model is better if we change the thresghold manually. Previously, we classified an object as QSO when the probability of being a quasar object was greater than 0.5. Now we are going to classify it as QSO when the probability is greater than 0.2 using the knn model with probabilities we just computed (more conservative because we want to reduce the number of quasar object classified as non quasar).
+
+```{r knnthreshold, cache = TRUE}
+threshold = 0.2 
+Cred.pred = rep("NOT.QSO", nrow(test_data))
+Cred.pred[which(knnProb[,2] > threshold)] = "QSO"
+CM = confusionMatrix(factor(Cred.pred), test_data$class)$table
+profit <- sum(profit.unit*CM)/sum(CM)
+profit
+```
+
+We have in fact increased slightly the economic profit to `r profit`, we have a bit better profit. However, we just tried another threshold and it improved, but how do we know if it is the best one? We are going to compute the ROC curve in order to compute this optimal threshold.
+
+```{r knnROC, cache = TRUE, warning = FALSE}
+roc.knn=roc(test_data$class ~ knnProb[,2])
+
+plot(roc.knn, col="red",print.thres=TRUE, ylim = c(0, 1), xlim = c(1, 0))
+optimal <- as.numeric(coords(roc.knn, "best", ret = "threshold"))
+```
+
+From the plot we can see that the best threshold is actually `r optimal`, so with our guess we were closer but not quite there. It is the one with the best balance between sensitivity and specificity. Now, an object is classified as a quasar object if the probability of being QSO is greater than 0.3. Being 0.3 our best threshold instead of 0.5 shows that our classes are unbalanced.
+
+```{r knnAUC, cache = TRUE}
+auc = roc.knn$auc
+auc
+```
+
+We are sure this is a good choice because the are under the curve, as we just computed, is incredibly high `r auc`, being the maximum 1 and minimum 0 (the higher the better).
+
+```{r knnrocthr, cache = TRUE}
+knnProb = predict(knnFit, test_data, type="prob") 
+threshold = optimal
+Cred.pred = rep("NOT.QSO", nrow(test_data))
+Cred.pred[which(knnProb[,2] > threshold)] = "QSO"
+CM = confusionMatrix(factor(Cred.pred), test_data$class)$table
+profit <- sum(profit.unit*CM)/sum(CM)
+profit
+```
+
+However, we can observe that both threshold behave very similarly and we obtain a very similar economic profit, so both thresholds are good choices.
+
+We have fitted a knn model that predicts with class, then we have improved it with one that predicts with probalities. Afterwards, we tried a more conservative threshold which improved it and then using the ROC curve we obtained the optimal threshold that performed as our manually chosen conservative one. When we say improved, we are talking in terms of decreasing the economic cost, not increasing the accuracy (we actually make it worse, we make more errors, but less economically costly). But we still do not know if our manually chosen threshold is the best one, we will compute the best one.
+
+```{r knnloop, cache = TRUE}
+profit.i = matrix(NA, nrow = 15, ncol = 10)
+# 20 replicates for training/testing sets for each of the 10 values of threshold
+
+grid = knnFit$bestTune
+
+seq = c(seq(0.05,0.45,0.05), optimal)
+
+j <- 0
+for (threshold in seq){
+  
+  j <- j + 1
+  #cat(j)
+  for(i in 1:15){
+    
+    # partition data intro training (75%) and testing sets (25%)
+    d <- createDataPartition(train_data$class, p = 0.4, list = FALSE)
+    # select training sample
+    
+    train <- train_data[d,]
+    test  <- train_data[-d,]  
+    
+    knnFit <- train(class ~ ., 
+                method = "knn", 
+                data = train,
+                preProcess = c("center", "scale"),
+                tuneLength = 0, # k = 7
+                tuneGrid = grid,
+                metric = "EconomicProfit",
+                trControl = ctrl)
+    
+    knnProb = predict(knnFit, test, type="prob")
+    knnPred = rep("NOT.QSO", nrow(test))
+    knnPred[which(knnProb[,2] > threshold)] = "QSO"
+    
+    CM = confusionMatrix(factor(knnPred), test$class)$table
+    profit = sum(as.vector(CM)*profit.unit)/sum(CM)
+    profit
+    
+    profit.i[i,j] <- profit
+  }
+}
+
+# Threshold optimization:
+boxplot(profit.i, main = "Threshold selection",
+        ylab = "Economic profit",
+        xlab = "threshold value",
+        names = seq, col="royalblue2",las=2)
+
+# values around 0.2 are reasonable
+medians = apply(profit.i, 2, median)
+medians
+```
+
+We observe that the optimal threshold for our model is around 0.3, so we compute the optimal one and make our final prediction using it.
+
+```{r knnoptthr, cache = TRUE}
+knnProb = predict(knnFit, test_data, type="prob") 
+indexthr = which.max(medians)
+threshold = seq[indexthr]
+Cred.pred = rep("NOT.QSO", nrow(test_data))
+Cred.pred[which(knnProb[,2] > threshold)] = "QSO"
+CM = confusionMatrix(factor(Cred.pred), test_data$class)$table
+profit <- sum(profit.unit*CM)/sum(CM)
+profit
+```
+
+We are not satisfied with this model, we want to see if we can improve it more. Hence, we try with Support Vector Machines (SVM) models.
+
+#### Variable importance and partial dependencies
+
+We study the variable importance to be able to plot it later.
+
+```{r knnvar, cache = TRUE}
+knn_imp <- varImp(knnFit, scale = F)
+plot(knn_imp, scales = list(y = list(cex = .95)))
+```
+
+`redshift` is once again the most important one.
+
+```{r knnpart, cache = TRUE}
+partial(knnFit, pred.var = "redshift", which.class=2, plot = TRUE, prob=TRUE, rug = TRUE)
+partial(knnFit, pred.var = "z", which.class=2, plot = TRUE, prob=TRUE, rug = TRUE)
+partial(knnFit, pred.var = "i", which.class=2, plot = TRUE, prob=TRUE, rug = TRUE)
+```
+
+We can see that the bigger the value in either of these 3 variables, the bigger the chance to be a quasar object.
+
+### Support Vector Machines (SVM)
+
+Support Vector Machine (SVM) is a powerful supervised machine learning algorithm used for classification and regression tasks. It's particularly effective in high-dimensional spaces and when the number of features is greater than the number of samples. SVM works by finding the optimal hyperplane that best separates the data points into different classes or predicts continuous outcomes.
+
+SVMs is effective in high-dimensional spaces, versatile because it supports different kernel functions for handling non-linear relationships. and robust against overfitting, especially with proper regularization. However, SVMs can be sensitive to the choice of the kernel function and its parameters. Additionally, they can be computationally expensive, especially with large datasets, and may require careful tuning of hyperparameters for optimal performance
+
+We are going to use caret once again, since we already defined the economic cost (what we want to maximize, our performance metric) and the control function (how we compute the hyper-parameters), we just have to use the train function with the corresponding method and arguments to train our SVM model.
+
+```{r svmtrain, cache = TRUE}
+svmFit <- train(class ~., method = "svmRadial", 
+                data = train_data,
+                preProcess = c("center", "scale"),
+                tuneGrid = expand.grid(C = c(0.1, 0.25, 0.5, 0.75, 1), # grid for C
+                                      sigma = c(0.01, 0.02, 0.05, 0.07, 0.1)), # grid for sigma
+                metric = "EconomicProfit", # maximizing the profit again
+                trControl = ctrl)
+print(svmFit)
+best_hyperparameters <- svmFit$bestTune
+best_row <- svmFit$results[svmFit$results$sigma == best_hyperparameters$sigma & svmFit$results$C == best_hyperparameters$C, ]
+profit <- best_row$EconomicProfit
+```
+
+If we look at the economic cost associated with every combination of possible values for our hyper-parameters, we see that the best combination is sigma = `r best_hyperparameters$sigma` and c = `r best_hyperparameters$C` with economic profit `r profit`. We store the hyperparameters.
+
+```{r svmhyp, cache = TRUE}
+svmhyp = best_hyperparameters
+```
+
+After training it and doing hyper-parameter tuning, we obtain the predictions of our test dataset. 
+
+```{r svmpred, cache = TRUE}
+svmPred = predict(svmFit, test_data)
+head(svmPred)
+cm = confusionMatrix(svmPred,test_data$class)
+cm
+accuracy = cm$overall["Accuracy"]
+profit = EconomicProfit(data = data.frame(pred  = svmPred, obs = test_data$class))
+profit
+```
+
+The performance is really good, the accuracy is `r accuracy` , but, more importantly, the economic profit is `r profit`, which is the best profit yet, better than all the knn ones we computed and the benchmark too.
+
+As we did in knn, we are going to take another approach and use the probabilities from SVM, which in this case are calibrated using Platt scaling (logistic regression on the SVM’s scores).
+
+```{r svmprob, cache = TRUE}
+svmProb = predict(svmFit, test_data, type="prob")
+head(svmProb)
+```
+
+We are going to use this model to compute the predictions changing thresholds. As we did in knn, first we try with the manually chosen 0.2 threshold.
+
+```{r svmthr, cache = TRUE}
+threshold = 0.3
+Cred.pred = rep("NOT.QSO", nrow(test_data)) # All good's
+Cred.pred[which(svmProb[,2] > threshold)] = "QSO" # Change the observations in the threshold as bad
+
+CM = confusionMatrix(factor(Cred.pred), test_data$class)
+accuracy = CM$overall["Accuracy"]
+profit <- sum(profit.unit*CM$table)/sum(CM$table)
+profit
+```
+
+It is slightly better again, with an economic profit of `r profit` and accuracy of `r accuracy`. Once again, we want to look for the optimal threshold, so we use again the ROC.
+
+```{r svmroc, cache = TRUE}
+roc.svm=roc(test_data$class ~ svmProb[,2])
+
+plot(roc.knn, col="red",print.thres=TRUE, ylim = c(0, 1), xlim = c(1, 0)) # ROC curve for knn
+plot(roc.svm, add=TRUE, col='blue',print.thres=TRUE) # ROC curve for SVM
+legend("bottomright", legend=c("knn", "svm"), col=c("red", "blue"), lwd=2)
+optimal <- as.numeric(coords(roc.svm, "best", ret = "threshold"))
+```
+
+Here, we can see that the optimal threshold for SVM with probabilities is `r optimal`. Moreover, and more importantly, since we have plotted both models (knn and svm), we can see that svm is better (we have also seen it in the increase in economic profit) because the area under the curve is bigger, as we can check.
+
+```{r svmauc, cache = TRUE}
+auc = roc.svm$auc
+auc
+```
+
+Incredibly high, even higher than the knn one, our AUC is now `r auc`.
+
+So our better model yet is an svm model according to the ROC is the one with threshold `r optimal`. We want to check how much the economic profit improves (we had economic profit = `r profit` with threshold 0.2).
+
+```{r svmrocthr, cache = TRUE}
+threshold = optimal
+Cred.pred = rep("NOT.QSO", nrow(test_data)) # All good's
+Cred.pred[which(svmProb[,2] > threshold)] = "QSO" # Change the observations in the threshold as bad
+
+CM = confusionMatrix(factor(Cred.pred), test_data$class)$table
+profit <- sum(profit.unit*CM)/sum(CM)
+profit
+```
+
+In this case, we can see that this 'optimal' threshold is actually more or less the same as the 0.2 we tried, but very slightly worse.
+
+We have to keep in mind that the ROC does not take into account the economic aspect of our task, it only takes into account the specificity and the sensitivity. This is why the 'optimal' threshold we obtain from it is worse than our chosen one. This is why, as in knn, we are going to compute the optimal threshold taking into account the economic aspect.
+
+```{r svmloop, cache = TRUE}
+profit.i = matrix(NA, nrow = 5, ncol = 10)
+# 20 replicates for training/testing sets for each of the 10 values of threshold
+
+grid = best_hyperparameters
+
+seq_values <- seq(0.05, 0.45, 0.05)
+
+# Append 0.22 to the sequence
+seq_values <- c(seq_values, optimal)
+
+j <- 0
+for (threshold in seq_values){
+  
+  j <- j + 1
+  #cat(j)
+  for(i in 1:5){
+    
+    # partition data intro training (75%) and testing sets (25%)
+    d <- createDataPartition(train_data$class, p = 0.4, list = FALSE)
+    # select training sample
+    
+    train <- train_data[d,]
+    test  <- train_data[-d,]  
+    
+    svmFit <- train(class ~., method = "svmRadial", 
+                data = train,
+                preProcess = c("center", "scale"),
+                tuneGrid = grid, 
+                metric = "EconomicProfit", # maximizing the profit again
+                trControl = ctrl)
+  
+    
+    svmProb = predict(svmFit, test, type="prob")
+    svmPred = rep("NOT.QSO", nrow(test))
+    svmPred[which(svmProb[,2] > threshold)] = "QSO"
+    
+    CM = confusionMatrix(factor(svmPred),test$class)$table
+    profit = sum(profit.unit*CM)/sum(CM)
+    profit
+    
+    profit.i[i,j] <- profit
+    
+  }
+}
+
+# Threshold optimization:
+boxplot(profit.i, main = "Threshold selection",
+        ylab = "Economic profit",
+        xlab = "threshold value",
+        names = seq_values,col="royalblue2",las=2)
+
+# values around 0.2 are reasonable
+medians = apply(profit.i, 2, median)
+medians
+```
+
+We compute the optimal threshold and then, we make the final prediction for this model.
+
+```{r svmoptthres, cache = TRUE}
+svmProb = predict(svmFit, test_data, type="prob")
+indexthr = which.max(medians)
+threshold = seq_values[indexthr]
+Cred.pred = rep("NOT.QSO", nrow(test_data)) # All good's
+Cred.pred[which(svmProb[,2] > threshold)] = "QSO" # Change the observations in the threshold as bad
+
+CM = confusionMatrix(factor(Cred.pred), test_data$class)$table
+profit <- sum(profit.unit*CM)/sum(CM)
+profit
+```
+
+We have now an economic profit of `r profit`. We see that it performs worse than with the one of the ROC, but his may be because it actually is not better but by chance in this exact chance it is. However, doing cross-validation in the loop we see that the one that performs better on the average is `r threshold`.
+
+We store its profit and threshold.
+
+```{r svmprofit, cache = TRUE}
+svmprofit = profit
+svmoptimal = threshold
+```
+
+
+#### Variable importance and partial dependencies
+ 
+We study which variables are the most influencial in our prediction.
+
+```{r svmvar, cache = TRUE}
+svm_imp <- varImp(svmFit, scale = F)
+plot(svm_imp, scales = list(y = list(cex = .95)))
+```
+Once again, `redshift` is the most influential one followed by `z`and `i`.
+
+```{r svmpart, cache = TRUE}
+partial(svmFit, pred.var = "redshift", which.class=2, plot = TRUE, prob=TRUE, rug = TRUE)
+partial(svmFit, pred.var = "z", which.class=2, plot = TRUE, prob=TRUE, rug = TRUE)
+partial(svmFit, pred.var = "i", which.class=2, plot = TRUE, prob=TRUE, rug = TRUE)
+```
+
+We can see what we saw in the EDA and on the penalized logistic regression model, the higher the value, the bigger the probability of being a quasar object. Moreover, when the value in the `redshift` variable is higher than 2, the object is always classified as quasar. Moreover, we can see that both variables `z`and `i` have the same dependency with `class. The higher their value, the higher the probability that the object is classified as quasar object.
+
+### Decision trees
+
+Decision Trees are versatile and powerful supervised machine learning algorithms used for both classification and regression tasks. They create a model that predicts the value of a target variable by learning simple decision rules inferred from the data features.
+
+Decision trees are easy to interpret and visualize, they have the ability to handle both numerical and categorical data without the need for feature scaling and they are robustness to outliers. However, decision trees can suffer from overfitting, particularly when the tree grows too deep and captures noise in the training data. Ensemble methods like Random Forests and Gradient Boosting Machines are often used to mitigate this issue by combining multiple decision trees to improve predictive performance, we will implement them later on.
+
+We are going to use the function available in the caret package again. We first fit the model with our economic profit condition.
+
+```{r dttrain, cache = TRUE}
+grid_c50 <- expand.grid( .winnow = c(TRUE,FALSE), .trials=c(1,5,10,15,20), .model="tree" )
+
+fit.c50 <- train(class ~.,
+                data=train_data,
+                method="C5.0",
+                metric="EconomicProfit",
+                tuneGrid = grid_c50,
+                trControl = ctrl)
+fit.c50
+best_hyperparameters <- fit.c50$bestTune
+best_row <- fit.c50$results[fit.c50$results$winnow == best_hyperparameters$winnow & 
+                            fit.c50$results$trials == best_hyperparameters$trials & 
+                            fit.c50$results$model == best_hyperparameters$model, ]
+profit <- best_row$EconomicProfit
+```
+
+Once again, we look at all the combination and their resulting economic profit to choose the combination with the highest economic profit, which is `r profit` with winnow = `r best_hyperparameters$winnow` and `r best_hyperparameters$trials` trials. We store their values.
+
+```{r dthyp, cache = TRUE}
+dthyp = best_hyperparameters
+```
+
+we are going to take a visual look at our tree with the summary function.
+
+```{r dtsum, cache = TRUE}
+summary(fit.c50)
+```
+
+Now that we have our model trained, we want to predict our test dataset.
+
+```{r dtpred, cache = TRUE}
+c50.pred <- predict(fit.c50, newdata=test_data)
+cm = confusionMatrix(c50.pred, test_data$class)
+cm
+accuracy = cm$overall["Accuracy"]
+profit = EconomicProfit(data = data.frame(pred  = c50.pred, obs = test_data$class))              
+profit
+```
+
+In terms of accuracy, it is a really strong model with `r accuracy`, but we are interested in the economic profit. In this model, the economic profit is `r profit`, which does improve the economic of our best SVM model.
+
+We are, once again, computing the probabilities (fraction of samples of the same class in a leaf) in order to be able to change the threshold manually and try to improve more our model. We once again try with 0.2 as the threshold.
+
+```{r dtprob, cache = TRUE}
+c50.Prob = predict(fit.c50, test_data, type="prob")
+head(c50.Prob)
+```
+
+```{r dtthr1, cache = TRUE}
+threshold = 0.2
+Cred.pred = rep("NOT.QSO", nrow(test_data))
+Cred.pred[which(c50.Prob[,2] > threshold)] = "QSO"
+CM = confusionMatrix(factor(Cred.pred), test_data$class)$table
+profit <- sum(profit.unit*CM)/sum(CM)
+profit
+```
+
+With this threshold it is actually a bit worse, the economic profit is lower, `r profit`. We will try with a different threshold, a little higher.
+
+```{r dtthr2, cache = TRUE}
+threshold = 0.3
+Cred.pred = rep("NOT.QSO", nrow(test_data))
+Cred.pred[which(c50.Prob[,2] > threshold)] = "QSO"
+CM = confusionMatrix(factor(Cred.pred), test_data$class)
+accuracy = CM$overall["Accuracy"]
+profit <- sum(profit.unit*CM$table)/sum(CM$table)
+profit
+```
+
+This does actually improve, the economic profit is `r profit` and the accuracy is `r accuracy`. We are going to follow the same structure as before, so we are going to compute the ROC, but include the 2 previous models to compare them too.
+
+```{r dtroc, cache = TRUE}
+roc.dt=roc(test_data$class ~ c50.Prob[,2])
+
+plot(roc.knn, col="red",print.thres=TRUE)
+plot(roc.svm, add=TRUE, col='blue',print.thres=TRUE)
+plot(roc.dt, add=TRUE, col='green',print.thres=TRUE)
+legend("bottomright", legend=c("knn", "svm", "dt"), col=c("red", "blue", "green"), lwd=2)
+optimal <- as.numeric(coords(roc.dt, "best", ret = "threshold"))
+```
+
+```{r dtauc, cache = TRUE}
+auc = roc.dt$auc
+```
+
+We plotted the three model seen until now (knn, svm and decision trees) and we can see that the best is decision trees followed by svm and then, the worst, knn. The optimal threshold computed by the ROC for our decision tree model is `r optimal` and the resulting AUC is `r auc`, which is an incredibly good model. As seen before, maybe this 'optimal' threshold is not optimal according to our economic profit, so we are going to check if it improves or not.
+
+```{r dtthrroc, cache = TRUE}
+c50.Prob = predict(fit.c50, test_data, type="prob")
+threshold = optimal
+Cred.pred = rep("NOT.QSO", nrow(test_data))
+Cred.pred[which(c50.Prob[,2] > threshold)] = "QSO"
+CM = confusionMatrix(factor(Cred.pred), test_data$class)$table
+profit <- sum(profit.unit*CM)/sum(CM)
+profit
+```
+
+In this case, it actually does improve the economic profit to `r profit`.  From all the models explored until now, the best performing one yet, in terms of economic profit, is the decision tree with probabilities with `r optimal` as the threshold. However, we do not know if it the optimal according to our economic aspect, because the ROC does not take it into account as we previously said. We compute the optimal and make the final prediction.
+
+Since the ROC does not take into account the economic nature of our problem and we compute the optimal threshold with the following loop, we are not going to keep using the ROC.
+
+```{r dtloop, cache = TRUE}
+profit.i = matrix(NA, nrow = 15, ncol = 10)
+# 20 replicates for training/testing sets for each of the 10 values of threshold
+
+grid <- best_hyperparameters
+
+seq_values <- seq(0.05, 0.45, 0.05)
+
+# Append 0.22 to the sequence
+seq_values <- c(seq_values, optimal)
+
+j <- 0
+for (threshold in seq_values){
+  
+  j <- j + 1
+  #cat(j)
+  for(i in 1:15){
+    
+    # partition data intro training (75%) and testing sets (25%)
+    d <- createDataPartition(train_data$class, p = 0.4, list = FALSE)
+    # select training sample
+    
+    train <- train_data[d,]
+    test  <- train_data[-d,]  
+    
+    fit.c50 <- train(class ~.,
+                data=train,
+                method="C5.0",
+                metric="EconomicProfit",
+                tuneGrid = grid,
+                trControl = ctrl)
+    
+    dtProb = predict(fit.c50, test, type="prob")
+    dtPred = rep("NOT.QSO", nrow(test))
+    dtPred[which(dtProb[,2] > threshold)] = "QSO"
+    
+    CM = confusionMatrix(factor(dtPred), test$class)$table
+    profit = sum(as.vector(CM)*profit.unit)/sum(CM)
+    profit
+    
+    profit.i[i,j] <- profit
+    
+  }
+}
+
+# Threshold optimization:
+boxplot(profit.i, main = "Threshold selection",
+        ylab = "Economic profit",
+        xlab = "threshold value",
+        names = seq_values, col="royalblue2",las=2)
+
+# values around 0.2 are reasonable
+medians = apply(profit.i, 2, median)
+medians
+```
+
+The optimal threshold is computed and then, we obtain the final predictions and corresponding economic profit.
+
+```{r dtoptthr, cache = TRUE}
+indexthr = which.max(medians)
+threshold = seq_values[indexthr]
+Cred.pred = rep("NOT.QSO", nrow(test_data))
+Cred.pred[which(c50.Prob[,2] > threshold)] = "QSO"
+CM = confusionMatrix(factor(Cred.pred), test_data$class)$table
+profit <- sum(profit.unit*CM)/sum(CM)
+profit
+```
+
+This is our best model to this moment, but we are not satisfied yet, we know a bunch of more models with machine learning, so we are going to study them too, random forest first. We store its profit and optimal threshold too.
+
+```{r dtprofit, cache = TRUE}
+dtprofit = profit
+dtoptimal = threshold
+```
+
+
+#### Variable importance and partial dependencies
+ 
+We compute the variable importance.
+
+```{r dtvar, cache = TRUE}
+dt_imp <- varImp(fit.c50, scale = F)
+plot(dt_imp, scales = list(y = list(cex = .95)))
+```
+
+We see clearly that the most important variables are `redshift` (as always), `i` and `u`, with the same importance all of them.
+
+```{r dtpart, cache = TRUE}
+partial(fit.c50, pred.var = "redshift", which.class=2, plot = TRUE, prob=TRUE, rug = TRUE)
+partial(fit.c50, pred.var = "i", which.class=2, plot = TRUE, prob=TRUE, rug = TRUE)
+partial(fit.c50, pred.var = "u", which.class=2, plot = TRUE, prob=TRUE, rug = TRUE)
+```
+
+From the `redshift` graph we can draw the same conclusions as before, but seeing that the probability does not increase to 1, but only to 0.9. The variable `i` shows that with values less than 20 they are not likely to be QSO and with higher than 23 they are QSO. Between 20 and 23 the higher the more probable it is QSO, with a decrease in probability in the middle. The variable `u` works as the contrary, the higher the value, the lower the probability of being classified as QSO.
+
+### Random Forest
+
+Random Forest is a popular ensemble learning technique used for both classification and regression tasks. It operates by building multiple decision trees during the training phase and then combining their predictions to improve accuracy and reduce overfitting.
+
+However, Random Forest may not be as interpretable as individual decision trees, especially when dealing with a large number of trees. Additionally, training a Random Forest model can be computationally expensive, especially with a large number of trees and features. Despite these drawbacks, Random Forest remains one of the most popular and widely used machine learning algorithms due to its excellent performance across various tasks and datasets.
+
+Once again, we use caret to train the model with out economic profit in mind.
+
+```{r rfmodel, cache = TRUE}
+rf.train <- train(class ~., 
+                  method = "rf", 
+                  data = train_data,
+                  preProcess = c("center", "scale"),
+                  ntree = 200,
+                  cutoff=c(0.7,0.3),
+                  tuneGrid = expand.grid(mtry=c(6,7,8,9,10)), 
+                  metric = "EconomicProfit",
+                  maximize = F,
+                  trControl = ctrl)
+rf.train
+best_hyperparameters <- rf.train$bestTune
+best_row <- rf.train$results[rf.train$results$mtry == best_hyperparameters$mtry, ]
+profit <- best_row$EconomicProfit
+```
+
+We see that the hyper-parameter with highest economic profit is mtry = `r best_hyperparameters$mtry`, which we are later going to use, so we store it. We use now this trained model to obtain our predictions and obtain the economic profit to be able to compare.
+
+```{r rfhyp, cache = TRUE}
+rfhyp = best_hyperparameters
+```
+
+```{r rfpred, cache = TRUE}
+rfPred = predict(rf.train, newdata=test_data)
+CM = confusionMatrix(factor(rfPred), test_data$class)$table
+profit = sum(as.vector(CM)*profit.unit)/sum(CM)
+profit
+```
+
+This is the best model yet, with the highest economic profit `r profit`.
+
+We try to improve it even more changing the threshold (first manually and then obtaining the optimal one).
+
+Sometimes, the threshold in the Bayes rule is more important than hyper-parameters in the ML tools:
+
+```{r fprob, cache = TRUE}
+threshold = 0.2
+rfProb = predict(rf.train, newdata=test_data, type="prob")
+rfPred = rep("NOT.QSO", nrow(test_data))
+rfPred[which(rfProb[,2] > threshold)] = "QSO"
+CM = confusionMatrix(factor(rfPred), test_data$class)$table
+profit = sum(as.vector(CM)*profit.unit)/sum(CM)
+profit
+```
+  
+It got worse with this one to `r profit`, let's compute the optimal one.
+  
+```{r rfloop, cache = TRUE}
+
+profit.i = matrix(NA, nrow = 15, ncol = 10)
+# 20 replicates for training/testing sets for each of the 10 values of threshold
+
+grid = best_hyperparameters
+
+j <- 0
+for (threshold in seq(0.05,0.5,0.05)){
+  
+  j <- j + 1
+  #cat(j)
+  for(i in 1:15){
+    
+    # partition data intro training (75%) and testing sets (25%)
+    d <- createDataPartition(train_data$class, p = 0.4, list = FALSE)
+    # select training sample
+    
+    train <- train_data[d,]
+    test  <- train_data[-d,]  
+    
+    rf.train <- train(class ~., 
+                  method = "rf", 
+                  data = train,
+                  preProcess = c("center", "scale"),
+                  ntree = 200,
+                  cutoff=c(0.7,0.3),
+                  tuneGrid = grid, 
+                  metric = "EconomicProfit",
+                  maximize = F,
+                  trControl = ctrl)
+    
+    rfProb = predict(rf.train, test, type="prob")
+    rfPred = rep("NOT.QSO", nrow(test))
+    rfPred[which(rfProb[,2] > threshold)] = "QSO"
+    
+    CM = confusionMatrix(factor(svmPred), test$class)$table
+    profit = sum(as.vector(CM)*profit.unit)/sum(CM)
+    profit
+    
+    profit.i[i,j] <- profit
+  }
+}
+
+# Threshold optimization:
+boxplot(profit.i, main = "Threshold selection",
+        ylab = "Economic profit",
+        xlab = "threshold value",
+        names = seq(0.05,0.5,0.05),col="royalblue2",las=2)
+
+# values around 0.2 are reasonable
+medians = apply(profit.i, 2, median)
+medians
+```
+
+We make our final predictions of the random forest model with the optimal threshold which we compute.
+
+```{r rfoptthr, cache = TRUE}
+indexthr = which.max(medians)
+threshold = seq(0.05,0.5,0.05)[indexthr]
+rfProb = predict(rf.train, newdata=test_data, type="prob")
+rfPred = rep("NOT.QSO", nrow(test_data))
+rfPred[which(rfProb[,2] > threshold)] = "QSO"
+CM = confusionMatrix(factor(rfPred), test_data$class)$table
+profit = sum(as.vector(CM)*profit.unit)/sum(CM)
+profit
+```
+
+We obtain an economic profit of `r profit`, that is slightly worse than the decision trees one. Our best model yet is with decision trees. We store its profit and optimal threshold.
+
+```{r rfprofit, cache = TRUE}
+rfprofit = profit
+rfoptimal = threshold
+```
+
+
+#### Variable importance and partial dependencies
+ 
+Let`s see which are the most explanatory variables.
+
+```{r rfvar, cache = TRUE}
+rf_imp <- varImp(rf.train, scale = F)
+plot(rf_imp, scales = list(y = list(cex = .95)))
+```
+
+```{r rfpart, cache = TRUE}
+partial(rf.train, pred.var = "redshift", which.class=2, plot = TRUE, prob=TRUE, rug = TRUE)
+```
+
+We draw the same conclusion as always, but like in decision trees, the probability only increases until 0.9.
+
+### Gradient boosting
+
+Gradient Boosting is a powerful machine learning technique used for both regression and classification tasks. It works by building a series of weak learners (typically decision trees) in a sequential manner, where each new learner corrects the errors made by the previous ones. Gradient Boosting combines the predictions of multiple weak learners to create a strong ensemble model.
+
+Gradient Boosting has high predictive accuracy , it handles mixed data types (a mixture of numerical and categorical features), it automatically handles missing values (learns from data with missing values without imputation) and provides feature importance.
+
+However, Gradient Boosting can be sensitive to hyperparameters and may require careful tuning to prevent overfitting. It can also be computationally expensive and slower to train compared to other algorithms. Despite these challenges, Gradient Boosting remains a popular and effective choice for various machine learning tasks.
+
+We are going to use the caret package to train a model that uses gradient boosting and takes into account the economic nature of our task. Firstly, we set the very wide grid for hyper-parameter tuning and then, we train introducing this grid.
+
+```{r gbgrid, results = 'hide'}
+xgb_grid = expand.grid(
+  nrounds = c(500, 600, 700, 800, 1000),
+  eta = c(0.01, 0.001), 
+  max_depth = c(2, 3, 4, 5, 6),
+  gamma = 1,
+  colsample_bytree = c(0.2, 0.25, 0.3, 0.35, 0.4),
+  min_child_weight = c(1, 2, 3, 4, 5),
+  subsample = 1
+)
+```
+
+Then, train.
+
+```{r gbmodel, cache = TRUE}
+xgb.train = train(class ~ .,
+                  data=train_data,
+                  trControl = ctrl,
+                  metric="EconomicProfit",
+                  maximize = F,
+                  tuneGrid = xgb_grid,
+                  preProcess = c("center", "scale"),
+                  method = "xgbTree"
+)
+best_hyperparameters = xgb.train$bestTune
+```
+
+```{r gbshow, cache = TRUE}
+xgb.train
+```
+
+We see that the best hyper-parameters are: nrounds = `r best_hyperparameters$nrounds`, eta = `r best_hyperparameters$eta`, max_depth = `r best_hyperparameters$max_depth`, gamma = 1, colsample_bytree = `r best_hyperparameters$colsample_bytree`, min_child_weight = `r best_hyperparameters$min_child_weight` and subsample = 1.
+
+With it, we obtain the predictions and see how well it performs according to our economic profit metric. We now use this model to predict directly using the probability to be able to change the threshold.
+
+```{r gbprob, cache = TRUE}
+threshold = 0.4
+xgbProb = predict(xgb.train, newdata=test_data, type="prob")
+xgbPred = rep("NOT.QSO", nrow(test_data))
+xgbPred[which(xgbProb[,2] > threshold)] = "QSO"
+CM = confusionMatrix(factor(xgbPred), test_data$class)$table
+profit = sum(as.vector(CM)*profit.unit)/sum(CM)
+profit
+```
+Worse than our previous model, let's try to improve it looking for the optimal threshold. 
+
+```{r gbloop, cache = TRUE}
+profit.i = matrix(NA, nrow = 15, ncol = 10)
+# 20 replicates for training/testing sets for each of the 10 values of threshold
+
+grid = best_hyperparameters
+
+j <- 0
+for (threshold in seq(0.25, 0.7, 0.05)){
+  
+  j <- j + 1
+  #cat(j)
+  for(i in 1:15){
+    
+    # partition data intro training (75%) and testing sets (25%)
+    d <- createDataPartition(train_data$class, p = 0.4, list = FALSE)
+    # select training sample
+    
+    train <- train_data[d,]
+    test  <- train_data[-d,]  
+    
+    xgb.train = train(class ~ .,
+                  data=train,
+                  trControl = ctrl,
+                  metric="EconomicProfit",
+                  maximize = F,
+                  tuneGrid = grid,
+                  preProcess = c("center", "scale"),
+                  method = "xgbTree"
+    )
+    
+    xgbProb = predict(xgb.train, test, type="prob")
+    xgbPred = rep("NOT.QSO", nrow(test))
+    xgbPred[which(xgbProb[,2] > threshold)] = "QSO"
+    
+    CM = confusionMatrix(factor(xgbPred), test$class)$table
+    profit = sum(as.vector(CM)*profit.unit)/sum(CM)
+    profit
+    
+    profit.i[i,j] <- profit
+    
+  }
+}
+
+# Threshold optimization:
+boxplot(profit.i, main = "Threshold selection",
+        ylab = "Economic profit",
+        xlab = "threshold value",
+        names = seq(0.05, 0.5, 0.05), col="royalblue2",las=2)
+
+# values around 0.2 are reasonable
+medians = apply(profit.i, 2, median)
+medians
+```
+
+Final prediction with the obtained hyper-parameters and optimal threshold.
+
+```{r gboptthr, cache = TRUE}
+indexthr = which.max(medians)
+threshold = seq(0.25, 0.7, 0.05)[indexthr]
+xgbProb = predict(xgb.train, newdata=test_data, type="prob")
+xgbPred = rep("NOT.QSO", nrow(test_data))
+xgbPred[which(xgbProb[,2] > threshold)] = "QSO"
+CM = confusionMatrix(factor(xgbPred), test_data$class)$table
+profit = sum(as.vector(CM)*profit.unit)/sum(CM)
+profit
+```
+
+We still do not have a model better than decision trees, we keep trying with neural networks later.
+
+#### Variable importance and partial dependencies
+ 
+We study to see which are the most informative variables.
+
+```{r gbvar, cache = TRUE}
+gb_imp <- varImp(xgb.train, scale = F)
+plot(gb_imp, scales = list(y = list(cex = .95)))
+```
+
+`redshift` is once again the most influential variable.
+
+```{r gbpart, cache = TRUE}
+partial(xgb.train, pred.var = "redshift", which.class=2, plot = TRUE, prob=TRUE, rug = TRUE)
+```
+
+We obtain the same conclusion as always, but in this one we see that the increase in probability is much more drastic and only until 0.44.
+
+### Neural Networks
+
+Neural networks are a class of machine learning models inspired by the structure and functioning of the human brain's biological neural networks. They consist of interconnected nodes, called neurons or units, organized in layers. Neural networks are capable of learning complex relationships and patterns directly from data, making them powerful tools for various machine learning tasks, including classification, regression, and pattern recognition.
+
+Neural networks can vary significantly in architecture, including the number of layers, the number of neurons in each layer, the type of activation functions used, and the specific training algorithm employed. Neural networks have gained popularity in recent years due to their ability to learn from large, complex datasets and achieve state-of-the-art performance in various domains, including computer vision, natural language processing, and speech recognition. However, training neural networks can be computationally intensive and requires large amounts of data
+
+We use caret to train our model with neural networks and, then, we plot it to observe it.
+
+```{r nnmodel, cache = TRUE}
+nn.train <- train(class ~., 
+                  method = "nnet", 
+                  data = train_data,
+                  preProcess = c("center", "scale"),
+                  MaxNWts = 1000,
+                  maxit = 100,
+                  tuneGrid = expand.grid(size=c(2,3,4,5,6), decay=c(0.01,0.007,0.005,0.003,0.001)), 
+                  metric = "EconomicProfit",
+                  maximize = F,
+                  trControl = ctrl)
+plot(nn.train)
+best_hyperparameters = nn.train$bestTune
+```
+
+We see that the best hyper-parameter for this model are size = `r best_hyperparameters$size` and decay = `r best_hyperparameters$decay`. We use our model that has been trained with these hyper-parameters, to predict out test dataset. We try changing the threshold manually to see if we can improve the prediction, as we did in the previous.
+
+```{r nnprob, cache = TRUE}
+threshold = 0.2
+nnProb = predict(nn.train, newdata=test_data, type="prob")
+nnPred = rep("NOT.QSO", nrow(test_data))
+nnPred[which(nnProb[,2] > threshold)] = "QSO"
+CM = confusionMatrix(factor(nnPred), test_data$class)$table
+profit = sum(as.vector(CM)*profit.unit)/sum(CM)
+profit
+```
+
+Not a bad profit `r profit`, but still not best that the decision trees one. Furthermore, we do not know if this ithreshold s the best one or not, so we compute the optimal threshold as in the previous ones.
+
+```{r nnloop, cache = TRUE}
+profit.i = matrix(NA, nrow = 15, ncol = 10)
+# 20 replicates for training/testing sets for each of the 10 values of threshold
+
+grid = best_hyperparameters
+
+j <- 0
+for (threshold in seq(0.05, 0.5, 0.05)){
+  
+  j <- j + 1
+  #cat(j)
+  for(i in 1:15){
+    
+    # partition data intro training (75%) and testing sets (25%)
+    d <- createDataPartition(train_data$class, p = 0.4, list = FALSE)
+    # select training sample
+    
+    train <- train_data[d,]
+    test  <- train_data[-d,]  
+    
+
+    nn.train <- train(class ~., 
+                  method = "nnet", 
+                  data = train,
+                  preProcess = c("center", "scale"),
+                  MaxNWts = 1000,
+                  maxit = 100,
+                  tuneGrid = grid, 
+                  metric = "EconomicProfit",
+                  maximize = F,
+                  trControl = ctrl)
+    
+    nnProb = predict(nn.train, test, type="prob")
+    nnPred = rep("NOT.QSO", nrow(test))
+    nnPred[which(nnProb[,2] > threshold)] = "QSO"
+    
+    CM = confusionMatrix(factor(nnPred), test$class)$table
+    profit = sum(as.vector(CM)*profit.unit)/sum(CM)
+    profit
+    
+    profit.i[i,j] <- profit
+    
+  }
+}
+
+# Threshold optimization:
+boxplot(profit.i, main = "Threshold selection",
+        ylab = "Economic profit",
+        xlab = "threshold value",
+        names = seq(0.05, 0.5, 0.05), col="royalblue2",las=2)
+
+# values around 0.2 are reasonable
+medians = apply(profit.i, 2, median)
+medians
+```
+
+We make the final prediction with the optimal threshold.
+
+```{r nnoptthe, cache = TRUE}
+index = which.max(medians)
+threshold = seq(0.05, 0.5, 0.05)[index]
+nnProb = predict(nn.train, newdata=test_data, type="prob")
+nnPred = rep("NOT.QSO", nrow(test_data))
+nnPred[which(nnProb[,2] > threshold)] = "QSO"
+CM = confusionMatrix(factor(nnPred), test_data$class)$table
+profit = sum(as.vector(CM)*profit.unit)/sum(CM)
+profit
+```
+
+We have a final economic profit of `r profit`, which is good, but still not better than the decision tree model.
+
+#### Variable importance and partial dependencies
+ 
+We compute the variable importance to see which one is the more relevant in this model.
+
+```{r nnvar, cache = TRUE}
+nn_imp <- varImp(nn.train, scale = F)
+plot(nn_imp, scales = list(y = list(cex = .95)))
+```
+
+`redshift` and `u` are the more relevant variables.
+
+```{r nnpart, cache = TRUE}
+partial(nn.train, pred.var = "redshift", which.class=2, plot = TRUE, prob=TRUE, rug = TRUE)
+partial(nn.train, pred.var = "u", which.class=2, plot = TRUE, prob=TRUE, rug = TRUE)
+```
+
+We can see that the higher value in `u` the closer to 0 is the probability of being classified as a quasar object. The conclusion with `redshift` is the same as always.
+
+### Deep Neural Networks
+
+Deep neural networks are a type of neural network architecture that consists of multiple hidden layers between the input and output layers. These networks are characterized by their depth, meaning they have more than one hidden layer, allowing them to learn complex and hierarchical representations of data. Deep learning, which relies on deep neural networks, has emerged as a powerful tool for solving a wide range of machine learning tasks, including image and speech recognition, natural language processing, and many others.
+
+Deep neural networks have revolutionized many fields of artificial intelligence and have achieved remarkable success in tasks that were previously considered challenging, such as image recognition, speech understanding, and language translation. Their ability to automatically learn hierarchical representations from data has made them indispensable tools in modern machine learning and artificial intelligence research.
+
+We use caret to compute it.
+
+```{r dnnmodel, message=FALSE, warning=FALSE, cache=TRUE}
+dnn.train <- train(class ~., 
+                  method = "dnn", 
+                  data = train_data,
+                  preProcess = c("center", "scale"),
+                  numepochs = 20, # number of iterations on the whole training set
+                  tuneGrid = expand.grid(layer1 = 1:4,
+                                         layer2 = 0:2,
+                                         layer3 = 0:2,
+                                         hidden_dropout = 0, 
+                                         visible_dropout = 0),
+                  metric = "EconomicProfit",
+                  maximize = F,
+                  trControl = ctrl)
+```
+
+```{r dnn plot, cache =TRUE}
+plot(dnn.train)
+best_hyperparameters = dnn.train$bestTune
+```
+
+We change the threshold manually.
+
+```{r dnnprob, cache = TRUE}
+threshold = 0.4
+dnnProb = predict(dnn.train, newdata=test_data, type="prob")
+dnnPred = rep("NOT.QSO", nrow(test_data))
+dnnPred[which(dnnProb[,2] > threshold)] = "QSO"
+CM = confusionMatrix(factor(dnnPred), test_data$class)$table
+profit = sum(as.vector(CM)*profit.unit)/sum(CM)
+profit 
+```
+
+We compute the most optimal one, because we want to improve our economic profit `r profit`.
+
+```{r dnnloop, message=FALSE, warning=FALSE, cache = TRUE}
+profit.i = matrix(NA, nrow = 15, ncol = 10)
+# 20 replicates for training/testing sets for each of the 10 values of threshold
+
+grid = best_hyperparameters
+
+j <- 0
+for (threshold in seq(0.25, 0.7, 0.05)){
+  
+  j <- j + 1
+  #cat(j)
+  for(i in 1:15){
+    
+    # partition data intro training (75%) and testing sets (25%)
+    d <- createDataPartition(train_data$class, p = 0.4, list = FALSE)
+    # select training sample
+    
+    train <- train_data[d,]
+    test  <- train_data[-d,]  
+    
+    dnn.train <- train(class ~., 
+                  method = "dnn", 
+                  data = train,
+                  preProcess = c("center", "scale"),
+                  numepochs = 20, # number of iterations on the whole training set
+                  tuneGrid = grid,
+                  metric = "EconomicProfit",
+                  maximize = F,
+                  trControl = ctrl)
+    
+    dnnProb = predict(dnn.train, test, type="prob")
+    dnnPred = rep("NOT.QSO", nrow(test))
+    dnnPred[which(dnnProb[,2] > threshold)] = "QSO"
+    
+    CM = confusionMatrix(factor(dnnPred), test$class)$table
+    profit = sum(as.vector(CM)*profit.unit)/sum(CM)
+    profit
+    
+    profit.i[i,j] <- profit
+    
+  }
+}
+
+# Threshold optimization:
+boxplot(profit.i, main = "Threshold selection",
+        ylab = "Economic profit",
+        xlab = "Threshold value",
+        names = seq(0.25, 0.7, 0.05), col="royalblue2",las=2)
+
+# values around 0.2 are reasonable
+medians = apply(profit.i, 2, median)
+medians
+```
+
+Final prediction with the optimal threshold.
+
+```{r dnnoptthr, cache = TRUE}
+index = which.max(medians)
+threshold = seq(0.25, 0.7, 0.05)[index]
+dnnProb = predict(dnn.train, newdata=test_data, type="prob")
+dnnPred = rep("NOT.QSO", nrow(test_data))
+dnnPred[which(dnnProb[,2] > threshold)] = "QSO"
+CM = confusionMatrix(factor(dnnPred), test_data$class)$table
+profit = sum(as.vector(CM)*profit.unit)/sum(CM)
+profit 
+```
+
+Incredibly bad performance as a model.
+
+#### Variable importance and partial dependencies
+ 
+We study which are the most influential variables. 
+
+```{r dnnvar, cache = TRUE}
+dnn_imp <- varImp(dnn.train, scale = F)
+plot(dnn_imp, scales = list(y = list(cex = .95)))
+```
+
+Once again, `redshift` is the most important one. This time the increase in probability to be classified as quasar object increases constantly with the increase of this variable, up to 0.3610.
+
+```{r dnnpart, cache = TRUE}
+partial(dnn.train, pred.var = "redshift", which.class=2, plot = TRUE, prob=TRUE, rug = TRUE)
+```
+
+### Model choosing
+
+After all this model computing, we can see the best performing one is decision trees (economic profit  = `r dtprofit`), followed by random forest (economic profit = `r rfprofit`) and then, support vector machines (economic profit = `r svmprofit`).
+
+However, we have two more ideas that we are going to implement to see if we can improve them more: down-sampling and ensemble models.
+
+#### Down-sampling
+
+Downsampling is a term commonly used in the context of machine learning, especially in problems involving imbalanced classification. It involves reducing the size of the majority class sample to match that of the minority class sample. This is done by randomly selecting an appropriate number of samples from the majority class, so that its size matches that of the minority class.
+
+When working with imbalanced datasets, where one class has significantly more samples than another, machine learning algorithms may be biased towards the majority class and struggle to recognize patterns in the minority class. This can result in models that do not generalize well and perform poorly in predicting the minority class.
+
+By using downsampling, the aim is to balance the dataset, which can improve the model's performance by enabling it to more effectively learn the characteristics of both classes. However, it's important to note that downsampling also involves loss of information, as samples from the majority class are being removed. Therefore, striking an appropriate balance between reducing bias and retaining necessary information for the model to learn correctly is crucial.
+
+We introduce in our control function the choice to downsample.
+
+```{r sampling, cache = TRUE}
+ctrl$sampling <- "up"
+```
+
+Now we are going to train our three best samples using this method and see if they improve.
+
+##### SVM
+
+```{r svmdowntrain, cache = TRUE}
+svmFit <- train(class ~., method = "svmRadial", 
+                data = train_data,
+                preProcess = c("center", "scale"),
+                tuneGrid = svmhyp,
+                metric = "EconomicProfit", # maximizing the profit again
+                trControl = ctrl)
+print(svmFit)
+```
+
+Now we make the predictions and see if the economic profit improves.
+
+```{r svmdownpred, cache =TRUE}
+svmProb = predict(svmFit, test_data, type="prob")
+threshold = svmoptimal
+svm.pred = rep("NOT.QSO", nrow(test_data)) # All good's
+svm.pred[which(svmProb[,2] > threshold)] = "QSO" # Change the observations in the threshold as bad
+
+CM = confusionMatrix(factor(svm.pred), test_data$class)$table
+profit <- sum(profit.unit*CM)/sum(CM)
+profit
+```
+
+Our profit before down-sampling was `r svmprofit` and now our profit is `r profit`, so it decreased. Let's try to see if it improves the decision trees.
+
+##### Decision trees
+
+```{r dtdowntrain, cache = TRUE}
+fit.c50 <- train(class ~.,
+                data=train_data,
+                method="C5.0",
+                metric="EconomicProfit",
+                tuneGrid = dthyp,
+                trControl = ctrl)
+fit.c50
+```
+
+```{r dtdownpred, cache = TRUE}
+threshold = dtoptimal
+Cred.pred = rep("NOT.QSO", nrow(test_data))
+Cred.pred[which(c50.Prob[,2] > threshold)] = "QSO"
+CM = confusionMatrix(factor(Cred.pred), test_data$class)$table
+profit <- sum(profit.unit*CM)/sum(CM)
+profit
+```
+
+Our profit before down-sampling was `r dtprofit` and now it is `r profit`, which is the same economic impact. Lets' take a look at our last of these 3 models.
+
+##### Random forest
+
+```{r rfdowntrain, cache = TRUE}
+rf.train <- train(class ~., 
+                  method = "rf", 
+                  data = train_data,
+                  preProcess = c("center", "scale"),
+                  ntree = 200,
+                  cutoff=c(0.7,0.3),
+                  tuneGrid = rfhyp, 
+                  metric = "EconomicProfit",
+                  maximize = F,
+                  trControl = ctrl)
+rf.train
+```
+
+Once trained, we obtain our predictions and the economic profit.
+
+```{r rfdownpred, cache = TRUE}
+threshold = rfoptimal
+rfProb = predict(rf.train, newdata=test_data, type="prob")
+rfPred = rep("NOT.QSO", nrow(test_data))
+rfPred[which(rfProb[,2] > threshold)] = "QSO"
+CM = confusionMatrix(factor(rfPred), test_data$class)$table
+best_profit = sum(as.vector(CM)*profit.unit)/sum(CM)
+best_profit
+```
+
+The economic profit before down-sampling was `r rfprofit` and now it is `r best_profit`, it increased
+
+Hence, out best model yet is random forest with down-sampling. We use a final approach to try and improve it (ensemble models).
+
+#### Ensemble models
+
+Ensemble learning is a machine learning technique where multiple models are trained to solve the same problem, and their predictions are combined to make a final prediction. The idea behind ensemble learning is that by combining the predictions of multiple models, the overall performance can often be better than that of any individual model.
+
+Ensemble learning can lead to improved generalization performance, robustness to overfitting, and better handling of complex datasets. It is widely used in various machine learning tasks, including classification, regression, and anomaly detection, and has been applied successfully in many real-world applications.
+
+We are going our best 3 models: svm, decision trees and random forest before down-sampling. It is very computationally costly because we take economic profit into account.
+
+First, we create an ensemble for classification with mode function.
+
+```{r mode, cache = TRUE}
+mode <- function(v) {
+  uniqv <- unique(v)
+  uniqv[which.max(tabulate(match(v, uniqv)))]
+}
+```
+
+Now, we make the predictions.
+
+```{r ensemble, cache = TRUE}
+ensemble.pred = apply(data.frame(svm.pred, Cred.pred, rfPred), 1, mode) 
+CM = confusionMatrix(factor(ensemble.pred), test_data$class)$table
+profit = sum(as.vector(CM)*profit.unit)/sum(CM)
+profit
+```
+
+Our best profit yet was that from random forest after down-sampling `r best_profit` and now we have `r profit`, so it did not improve it.
+
+##### Final model and predictions.
+
+After all this implementation of numerous machine learning tools and the implementation of various techniques to improve the models, we have arrived at our best model. Our best model is random forest with down-sampling and the corresponding economic profit of the predictions is `r best_profit`.
+
